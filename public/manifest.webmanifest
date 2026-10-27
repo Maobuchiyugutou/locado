@@ -1,0 +1,26 @@
+{
+  "id": "./",
+  "name": "Locado — 本地待办",
+  "short_name": "Locado",
+  "description": "本地优先的待办、习惯打卡与专注工具，数据保存在当前浏览器。",
+  "lang": "zh-CN",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#fafaf7",
+  "theme_color": "#c15f3c",
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
