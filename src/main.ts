@@ -1,8 +1,16 @@
 import "./styles.css";
+import { isTauri } from "@tauri-apps/api/core";
+import { save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { writeTextFile } from "@tauri-apps/plugin-fs";
+import {
+  isPermissionGranted as hasNativeNotificationPermission,
+  requestPermission as requestNativeNotificationPermission,
+  sendNotification,
+} from "@tauri-apps/plugin-notification";
 import { getDB, normalizeSnapshot, onStorageError, SNAPSHOT_KEY, uid } from "./db";
 import { INBOX_ID } from "./seed";
 import { importFromTickTickCsv } from "./importers";
-import { parseTask } from "./nlp";
+import { applyQuickAddCorrections, parseTask, resolveQuickAddMetadata, type ParsedTask } from "./nlp";
 import { setupPWA } from "./pwa";
 import {
   HABIT_ICONS,
@@ -692,11 +700,23 @@ function applyTime(t: Task, val: string): void {
   t.dueDate = base.getTime(); t.hasTime = true;
 }
 function ensureNotifyPermission(): void {
+  if (isTauri()) {
+    void (async () => {
+      if (!(await hasNativeNotificationPermission())) await requestNativeNotificationPermission();
+    })().catch(() => { /* ignore */ });
+    return;
+  }
   try { if ("Notification" in window && Notification.permission === "default") void Notification.requestPermission(); } catch { /* ignore */ }
 }
 function fireReminder(t: Task): void {
   const body = t.title + (t.dueDate != null ? `  ·  ${dueLabel(t.dueDate)}${t.hasTime ? " " + fmtTime(t.dueDate) : ""}` : "");
-  try { if ("Notification" in window && Notification.permission === "granted") new Notification("⏰ Locado 提醒", { body }); } catch { /* ignore */ }
+  if (isTauri()) {
+    void (async () => {
+      if (await hasNativeNotificationPermission()) sendNotification({ title: "⏰ Locado 提醒", body });
+    })().catch(() => { /* ignore */ });
+  } else {
+    try { if ("Notification" in window && Notification.permission === "granted") new Notification("⏰ Locado 提醒", { body }); } catch { /* ignore */ }
+  }
   toast("⏰ " + body);
 }
 function checkReminders(): void {
@@ -959,23 +979,33 @@ async function toggleDone(t: Task): Promise<void> {
   await db.saveTask(t);
   if (selectedId === t.id && t.completed) closeDetail(); else render();
 }
-async function addTask(title: string): Promise<void> {
+async function addTask(title: string, corrected?: ParsedTask, skipDateDefault = false): Promise<void> {
   const raw = title.trim(); if (!raw) return;
-  const parsed = parseTask(raw);
+  const parsed = corrected ?? parseTask(raw);
+  const metadata = resolveQuickAddMetadata(parsed.projectName, parsed.tagNames, snap.projects, snap.tags);
   const filter = view.startsWith("filter:") ? snap.filters.find((f) => f.id === view.slice(7)) : undefined;
   const rule = filter?.rule;
-  const projectId = view.startsWith("project:") ? view.slice(8) : rule?.projectIds.length === 1 ? rule.projectIds[0] : INBOX_ID;
+  const inheritedProjectId = view.startsWith("project:") ? view.slice(8) : rule?.projectIds.length === 1 ? rule.projectIds[0] : INBOX_ID;
+  const projectId = parsed.projectName ? metadata.projectId ?? INBOX_ID : inheritedProjectId;
   let dueDate = parsed.dueDate;
-  if (dueDate == null && (view === "smart:today" || view === "smart:next7" || rule?.due === "today" || rule?.due === "next7")) dueDate = fromDateInput(toDateInput(Date.now()));
-  if (dueDate == null && rule?.due === "overdue") dueDate = fromDateInput(toDateInput(Date.now() - DAY));
-  const tags = view.startsWith("tag:") ? [view.slice(4)] : rule?.tagIds.length ? [...rule.tagIds] : [];
-  const priority = rule?.priorities.length === 1 ? rule.priorities[0] : 0;
+  if (!skipDateDefault) {
+    if (dueDate == null && (view === "smart:today" || view === "smart:next7" || rule?.due === "today" || rule?.due === "next7")) dueDate = fromDateInput(toDateInput(Date.now()));
+    if (dueDate == null && rule?.due === "overdue") dueDate = fromDateInput(toDateInput(Date.now() - DAY));
+  }
+  const inheritedTags = view.startsWith("tag:") ? [view.slice(4)] : rule?.tagIds.length ? [...rule.tagIds] : [];
+  const tags = parsed.tagNames.length ? metadata.tagIds : inheritedTags;
+  const inheritedPriority = rule?.priorities.length === 1 ? rule.priorities[0] : 0;
+  const priority = parsed.prioritySpecified ? parsed.priority : inheritedPriority;
   const t: Task = { id: uid(), projectId, title: parsed.title, note: "", priority, completed: false, completedAt: null, dueDate, hasTime: parsed.hasTime, reminderMinutesBefore: parsed.reminderMinutesBefore, reminded: false, pinned: false, tags, subtasks: [], createdAt: Date.now(), updatedAt: Date.now() };
   const visibleInCurrentView = matchView(t, view);
   snap.tasks.push(t); await db.saveTask(t);
   if (t.reminderMinutesBefore != null) ensureNotifyPermission();
   render();
-  if (!visibleInCurrentView) toast(`已创建「${t.title || "无标题"}」，但它不符合当前筛选条件`);
+  const notices: string[] = [];
+  if (metadata.missingProject) notices.push(`未找到清单「${metadata.missingProject}」，已放入收集箱`);
+  if (metadata.missingTags.length) notices.push(`未找到标签：${metadata.missingTags.join("、")}`);
+  if (!visibleInCurrentView) notices.push(`已创建「${t.title || "无标题"}」，但它不符合当前筛选条件`);
+  if (notices.length) toast(notices.join("；"), { ms: 8000 });
 }
 async function removeTask(id: string): Promise<void> {
   const t = snap.tasks.find((x) => x.id === id);
@@ -1239,7 +1269,15 @@ function openFilterEditor(existing?: Filter): void {
   const m = modal(isNew ? "新建筛选器" : "编辑筛选器", body, foot);
 }
 
-function download(name: string, text: string): void {
+async function download(name: string, text: string): Promise<void> {
+  if (isTauri()) {
+    const path = await saveDialog({
+      defaultPath: name,
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    });
+    if (path) await writeTextFile(path, text);
+    return;
+  }
   const blob = new Blob([text], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -1289,7 +1327,10 @@ async function importCsvText(text: string): Promise<{ tasks: number; projects: n
 
 function openDataModal(ev?: Event): void {
   const trigger = ev?.currentTarget instanceof HTMLElement ? ev.currentTarget : null;
-  const exportBtn = el("button", { class: "btn-primary", onClick: () => download("locado-backup.json", JSON.stringify(snap, null, 2)) }, "导出为 JSON 备份");
+  const exportBtn = el("button", { class: "btn-primary", onClick: () => {
+    void download("locado-backup.json", JSON.stringify(snap, null, 2))
+      .catch((e) => toast("导出失败:" + ((e as Error)?.message ?? e), { ms: 9000 }));
+  } }, "导出为 JSON 备份");
 
   const jsonInp = el("input", { type: "file", accept: ".json", class: "file" }) as HTMLInputElement;
   jsonInp.addEventListener("change", async () => {
@@ -1361,11 +1402,46 @@ function buildShell(): void {
 
 function elAddInput(): HTMLElement {
   const input = el("input", { class: "add-input", placeholder: "＋ 添加任务,如「明天9点开会 提前30分钟提醒」" }) as HTMLInputElement;
+  const preview = el("div", { class: "quick-add-preview", role: "group", "aria-label": "自然语言识别结果" });
+  const ignored = new Set<string>();
+  let parsed = parseTask("");
+  const corrected = () => applyQuickAddCorrections(parsed, ignored);
+
+  const renderPreview = () => {
+    preview.innerHTML = "";
+    const show = !!input.value.trim() && parsed.parts.length > 0;
+    preview.style.display = show ? "flex" : "none";
+    if (!show) return;
+    const current = corrected();
+    preview.append(el("span", { class: "quick-add-title" }, `标题：${current.title || "无标题"}`));
+    for (const part of current.parts) {
+      const button = el("button", {
+        type: "button",
+        class: "quick-add-chip",
+        title: "取消识别并保留为普通标题",
+        "aria-label": `取消识别 ${part.text}，保留为普通标题`,
+      }, part.text, el("span", { class: "quick-add-chip-x", "aria-hidden": "true" }, "×"));
+      button.addEventListener("click", () => { ignored.add(part.key); renderPreview(); input.focus(); });
+      preview.append(button);
+    }
+  };
+
+  input.addEventListener("input", () => {
+    ignored.clear();
+    parsed = parseTask(input.value);
+    renderPreview();
+  });
   input.addEventListener("keydown", (e) => {
     const k = e as KeyboardEvent;
-    if (k.key === "Enter" && !k.isComposing) { e.preventDefault(); void addTask(input.value); input.value = ""; }
+    if (k.key === "Enter" && !k.isComposing) {
+      e.preventDefault();
+      const current = corrected();
+      const skipDateDefault = ignored.has("date");
+      void addTask(input.value, current, skipDateDefault);
+      input.value = ""; ignored.clear(); parsed = parseTask(""); renderPreview();
+    }
   });
-  return input;
+  return el("div", { class: "quick-add" }, input, preview);
 }
 
 async function boot(): Promise<void> {

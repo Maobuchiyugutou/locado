@@ -1,11 +1,26 @@
-// 中文自然语言快速添加:从一句话里解析出日期、时间、提醒,并剥离出干净标题。
+// 中文自然语言快速添加:从一句话里解析出日期、时间、清单、标签、优先级和提醒。
 // 纯规则实现,无第三方依赖。属于"尽力而为":解析结果会填进任务,用户可在详情里再改。
+
+import type { Priority, Project, Tag } from "./types.ts";
+
+export type QuickAddPartKind = "date" | "time" | "project" | "tag" | "priority" | "reminder";
+export interface QuickAddPart {
+  key: string;
+  kind: QuickAddPartKind;
+  text: string;
+  value?: string;
+}
 
 export interface ParsedTask {
   title: string;
   dueDate: number | null;
   hasTime: boolean;
   reminderMinutesBefore: number | null;
+  projectName: string | null;
+  tagNames: string[];
+  priority: Priority;
+  prioritySpecified: boolean;
+  parts: QuickAddPart[];
 }
 
 const CN: Record<string, number> = { 零: 0, 〇: 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 };
@@ -30,17 +45,31 @@ const NUM = "[0-9]{1,2}|[零〇一二两三四五六七八九十]{1,3}";
 
 function midnight(d: Date): Date { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; }
 
+function calendarDate(year: number, month: number, day: number): Date | null {
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const d = new Date(year, month - 1, day);
+  if (d.getFullYear() !== year || d.getMonth() !== month - 1 || d.getDate() !== day) return null;
+  return midnight(d);
+}
+
 interface DateHit { date: Date | null; hits: string[]; }
 function detectDate(text: string): DateHit {
   const hits: string[] = [];
   const today = () => midnight(new Date());
 
-  for (const [w, off] of [["大后天", 3], ["后天", 2], ["明天", 1], ["明日", 1], ["今天", 0], ["今晚", 0], ["今日", 0], ["昨天", -1]] as [string, number][]) {
+  for (const [w, off] of [["大后天", 3], ["后天", 2], ["明天", 1], ["明日", 1], ["明晚", 1], ["明早", 1], ["今天", 0], ["今晚", 0], ["今日", 0], ["昨天", -1]] as [string, number][]) {
     if (text.includes(w)) { const d = today(); d.setDate(d.getDate() + off); hits.push(w); return { date: d, hits }; }
   }
 
   let m = text.match(new RegExp(`(${NUM})\\s*天后`));
   if (m) { const n = cnToNum(m[1]); if (n != null) { const d = today(); d.setDate(d.getDate() + n); hits.push(m[0]); return { date: d, hits }; } }
+
+  m = text.match(/(本|这|下)?\s*(?:个)?\s*月底/);
+  if (m) {
+    const t = today();
+    const d = new Date(t.getFullYear(), t.getMonth() + (m[1] === "下" ? 2 : 1), 0);
+    hits.push(m[0]); return { date: midnight(d), hits };
+  }
 
   // 周X / 星期X / 礼拜X(可带 下/本/这)
   m = text.match(/(下|本|这周|这)?\s*(?:周|星期|礼拜)\s*([一二三四五六天日\d])/);
@@ -58,18 +87,42 @@ function detectDate(text: string): DateHit {
     }
   }
 
+  // X年X月X[日号]
+  m = text.match(new RegExp(`(\\d{4})\\s*年\\s*(${NUM})\\s*月\\s*(${NUM})\\s*[日号]?`));
+  if (m) {
+    const mo = cnToNum(m[2]), da = cnToNum(m[3]);
+    const d = mo && da ? calendarDate(Number(m[1]), mo, da) : null;
+    if (d) { hits.push(m[0]); return { date: d, hits }; }
+    return { date: null, hits };
+  }
+
   // X月X[日号]
   m = text.match(new RegExp(`(${NUM})\\s*月\\s*(${NUM})\\s*[日号]`));
   if (m) {
     const mo = cnToNum(m[1]), da = cnToNum(m[2]);
-    if (mo && da) { const t = today(); const d = new Date(t.getFullYear(), mo - 1, da); if (d.getTime() < t.getTime()) d.setFullYear(d.getFullYear() + 1); hits.push(m[0]); return { date: midnight(d), hits }; }
+    const t = today();
+    if (mo && da) {
+      for (let year = t.getFullYear(); year <= t.getFullYear() + 4; year++) {
+        const d = calendarDate(year, mo, da);
+        if (d && d.getTime() >= t.getTime()) { hits.push(m[0]); return { date: d, hits }; }
+      }
+    }
+    return { date: null, hits };
   }
 
   // X[日号](仅日)
   m = text.match(new RegExp(`(${NUM})\\s*[日号]`));
   if (m) {
     const da = cnToNum(m[1]);
-    if (da && da >= 1 && da <= 31) { const t = today(); const d = new Date(t.getFullYear(), t.getMonth(), da); if (d.getTime() < t.getTime()) d.setMonth(d.getMonth() + 1); hits.push(m[0]); return { date: midnight(d), hits }; }
+    const t = today();
+    if (da) {
+      for (let offset = 0; offset <= 13; offset++) {
+        const month = new Date(t.getFullYear(), t.getMonth() + offset, 1);
+        const d = calendarDate(month.getFullYear(), month.getMonth() + 1, da);
+        if (d && d.getTime() >= t.getTime()) { hits.push(m[0]); return { date: d, hits }; }
+      }
+    }
+    return { date: null, hits };
   }
 
   return { date: null, hits };
@@ -82,7 +135,7 @@ function detectTime(text: string): TimeHit | null {
 
   // 时段词
   let mer: "am" | "pm" | "noon" | null = null;
-  for (const [w, v] of [["凌晨", "am"], ["早上", "am"], ["早晨", "am"], ["上午", "am"], ["中午", "noon"], ["下午", "pm"], ["傍晚", "pm"], ["晚上", "pm"], ["今晚", "pm"], ["夜里", "pm"]] as [string, "am" | "pm" | "noon"][]) {
+  for (const [w, v] of [["凌晨", "am"], ["早上", "am"], ["早晨", "am"], ["上午", "am"], ["明早", "am"], ["中午", "noon"], ["下午", "pm"], ["傍晚", "pm"], ["晚上", "pm"], ["今晚", "pm"], ["明晚", "pm"], ["夜里", "pm"]] as [string, "am" | "pm" | "noon"][]) {
     if (text.includes(w)) { mer = v; hits.push(w); break; }
   }
 
@@ -107,7 +160,7 @@ function detectTime(text: string): TimeHit | null {
   else if ((mer === "am") && h === 12) h = 0;
   else if (mer === "noon") h = 12;
   if (mer) strong = true;
-  if (h < 0 || h > 23) return null;
+  if (h < 0 || h > 23 || mi < 0 || mi > 59) return null;
   return { h, mi, strong, hits };
 }
 
@@ -129,6 +182,30 @@ function detectReminder(text: string): RemHit {
   return { min, hits };
 }
 
+interface ProjectHit { name: string | null; hit: string | null; }
+function detectProject(text: string): ProjectHit {
+  const m = text.match(/(?:^|\s)(#[\p{L}\p{N}_-]+)/u);
+  return { name: m ? m[1].slice(1) : null, hit: m?.[1] ?? null };
+}
+
+interface TagsHit { names: string[]; hits: string[]; }
+function detectTags(text: string): TagsHit {
+  const names = new Set<string>();
+  const hits: string[] = [];
+  for (const m of text.matchAll(/(?:^|\s)(@[\p{L}\p{N}_-]+)/gu)) {
+    names.add(m[1].slice(1)); hits.push(m[1]);
+  }
+  return { names: [...names], hits };
+}
+
+interface PriorityHit { value: Priority; hit: string | null; }
+function detectPriority(text: string): PriorityHit {
+  const m = text.match(/(高|中|低|无)\s*优先级|优先级\s*[:：]?\s*(高|中|低|无)/);
+  if (!m) return { value: 0, hit: null };
+  const values: Record<string, Priority> = { 高: 5, 中: 3, 低: 1, 无: 0 };
+  return { value: values[m[1] ?? m[2]], hit: m[0] };
+}
+
 export function parseTask(input: string): ParsedTask {
   const text = input.trim();
   const strip: string[] = [];
@@ -137,6 +214,12 @@ export function parseTask(input: string): ParsedTask {
   if (dt.date) strip.push(...dt.hits);
   const tmRaw = detectTime(text);
   const rm = detectReminder(text);
+  const project = detectProject(text);
+  const tags = detectTags(text);
+  const priority = detectPriority(text);
+  if (project.hit) strip.push(project.hit);
+  strip.push(...tags.hits);
+  if (priority.hit) strip.push(priority.hit);
 
   // 弱时间(纯中文「X点」无后缀/时段)只有在有日期时才采信,避免「有一点问题」误判
   const useTime = tmRaw && (tmRaw.strong || !!dt.date);
@@ -168,5 +251,95 @@ export function parseTask(input: string): ParsedTask {
     .trim();
   if (!title) title = text;
 
-  return { title, dueDate, hasTime, reminderMinutesBefore };
+  const parts: QuickAddPart[] = [];
+  if (dt.date) parts.push({ key: "date", kind: "date", text: dt.hits.join(" ") });
+  if (useTime && tmRaw) parts.push({ key: "time", kind: "time", text: tmRaw.hits.join(" ") });
+  if (project.hit && project.name) parts.push({ key: "project", kind: "project", text: project.hit, value: project.name });
+  for (const name of tags.names) parts.push({ key: `tag:${name}`, kind: "tag", text: `@${name}`, value: name });
+  if (priority.hit) parts.push({ key: "priority", kind: "priority", text: priority.hit });
+  if (reminderMinutesBefore != null) parts.push({ key: "reminder", kind: "reminder", text: rm.hits.join(" ") });
+
+  return {
+    title,
+    dueDate,
+    hasTime,
+    reminderMinutesBefore,
+    projectName: project.name,
+    tagNames: tags.names,
+    priority: priority.value,
+    prioritySpecified: priority.hit !== null,
+    parts,
+  };
+}
+
+export function applyQuickAddCorrections(parsed: ParsedTask, ignoredKeys: ReadonlySet<string>): ParsedTask {
+  const ignored = parsed.parts.filter((part) => ignoredKeys.has(part.key));
+  if (!ignored.length) return parsed;
+
+  const next: ParsedTask = {
+    ...parsed,
+    tagNames: parsed.tagNames.filter((name) => !ignoredKeys.has(`tag:${name}`)),
+    parts: parsed.parts.filter((part) => !ignoredKeys.has(part.key)),
+  };
+  const hasDate = next.parts.some((part) => part.kind === "date");
+  const hasTime = next.parts.some((part) => part.kind === "time");
+
+  if (next.dueDate != null) {
+    const previous = new Date(next.dueDate);
+    if (!hasDate && !hasTime) {
+      next.dueDate = null;
+      next.hasTime = false;
+    } else if (!hasDate && hasTime) {
+      const base = midnight(new Date());
+      base.setHours(previous.getHours(), previous.getMinutes(), 0, 0);
+      next.dueDate = base.getTime();
+      next.hasTime = true;
+    } else if (hasDate && !hasTime) {
+      previous.setHours(9, 0, 0, 0);
+      next.dueDate = previous.getTime();
+      next.hasTime = false;
+    }
+  }
+  if (ignoredKeys.has("project")) next.projectName = null;
+  if (ignoredKeys.has("priority")) { next.priority = 0; next.prioritySpecified = false; }
+  if (ignoredKeys.has("reminder") || next.dueDate == null) next.reminderMinutesBefore = null;
+  if (next.reminderMinutesBefore == null) next.parts = next.parts.filter((part) => part.kind !== "reminder");
+
+  const titleParts = [parsed.title];
+  for (const part of ignored) {
+    if (part.text && !titleParts.join(" ").includes(part.text)) titleParts.push(part.text);
+  }
+  next.title = titleParts.join(" ").replace(/\s{2,}/g, " ").trim();
+  return next;
+}
+
+export interface ResolvedQuickAddMetadata {
+  projectId: string | null;
+  tagIds: string[];
+  missingProject: string | null;
+  missingTags: string[];
+}
+
+function nameKey(name: string): string { return name.trim().toLocaleLowerCase(); }
+
+export function resolveQuickAddMetadata(
+  projectName: string | null,
+  tagNames: string[],
+  projects: Project[],
+  tags: Tag[],
+): ResolvedQuickAddMetadata {
+  const project = projectName ? projects.find((p) => nameKey(p.name) === nameKey(projectName)) : undefined;
+  const tagIds: string[] = [];
+  const missingTags: string[] = [];
+  for (const name of tagNames) {
+    const tag = tags.find((t) => nameKey(t.name) === nameKey(name));
+    if (tag) { if (!tagIds.includes(tag.id)) tagIds.push(tag.id); }
+    else missingTags.push(name);
+  }
+  return {
+    projectId: project?.id ?? null,
+    tagIds,
+    missingProject: projectName && !project ? projectName : null,
+    missingTags,
+  };
 }
