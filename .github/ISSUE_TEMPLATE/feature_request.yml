@@ -1,0 +1,31 @@
+name: Feature request
+description: Suggest a focused improvement for Locado
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Describe the user problem rather than only proposing an implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Explain the expected interaction and how it should work with local data.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Optional. Mention simpler approaches or trade-offs.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Scope
+      options:
+        - label: This request preserves local-first behavior and does not require an account or backend.
+          required: true

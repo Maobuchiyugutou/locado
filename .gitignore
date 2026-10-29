@@ -8,7 +8,9 @@ dist-ssr
 src-tauri/target
 src-tauri/gen
 
-# Editor
+# Editor and local-only files
 .vscode/*
 !.vscode/extensions.json
 .idea
+.claude/
+.local/

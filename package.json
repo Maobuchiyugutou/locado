@@ -3,7 +3,15 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Locado — a clean, local-first task manager",
+  "description": "A local-first task manager with habits, focus sessions, and offline PWA support",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Maobuchiyugutou/locado.git"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",

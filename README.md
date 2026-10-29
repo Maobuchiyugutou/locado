@@ -1,31 +1,88 @@
 # Locado
 
-一个简洁、**完全本地**的待办工具。数据归你所有。
+A local-first task manager with projects, tags, an Eisenhower matrix, habit tracking, focus sessions, and an installable offline PWA.
 
-- 前端:Vite + TypeScript(零 UI 框架,手写样式,支持浅/深色)
-- 桌面:Tauri 2(Rust) + 本地 SQLite(接入中)
-- 现阶段:前端用浏览器本地存储运行,便于预览;存储层已抽象,接入 Tauri 后换成 SQLite,业务代码不变。
+Built with Vite and TypeScript, without a UI framework. Your data stays in your browser and can be exported at any time.
 
-## 开发
+[![CI](https://github.com/Maobuchiyugutou/locado/actions/workflows/ci.yml/badge.svg)](https://github.com/Maobuchiyugutou/locado/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Node.js 24+](https://img.shields.io/badge/node.js-24%2B-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
+
+![Locado desktop application](docs/assets/locado-desktop.png)
+
+## Highlights
+
+- **Tasks, your way**: projects, tags, subtasks, notes, priorities, reminders, pinning, and independent important/urgent classification.
+- **Useful planning views**: Today, Next 7 Days, All, Completed, calendar, custom filters, and a drag-and-drop Eisenhower matrix.
+- **Sustainable routines**: habit check-ins and a Pomodoro-style focus timer linked to tasks.
+- **Local-first and offline-capable**: no account, telemetry, or backend required. Install the PWA and keep working offline.
+- **Portable data**: JSON backup and restore, plus TickTick CSV import.
+- **Desktop-focused interface**: light and dark themes, liquid-glass styling, keyboard navigation, and accessible dialogs.
+
+## Quick start
+
+### Requirements
+
+- Node.js 24 or newer
+- npm
 
 ```bash
-npm install
-npm run dev          # 浏览器预览 http://localhost:1420
-npm run tauri dev    # 桌面应用(需先装 Rust + MSVC 构建工具)
+npm ci
+npm run dev
 ```
 
-## 功能(v1)
+Open [http://localhost:1420](http://localhost:1420).
 
-- 清单 / 分组、收集箱
-- 任务:标题、备注、优先级(高/中/低)、截止日期、置顶
-- 子任务(清单项)、标签
-- 智能视图:今天 / 最近 7 天 / 全部 / 已完成
-- 浅色 / 深色主题
+### Production build
 
-## 规划
+```bash
+npm run build
+npm run preview -- --port 1420 --strictPort
+```
 
-- [ ] Tauri + SQLite 落地(本地数据库文件)
-- [ ] 日历视图(月/周/日)
-- [ ] 自定义智能清单(筛选器)
-- [ ] 习惯打卡、番茄钟
-- [ ] 从滴答清单导入数据
+### Tests
+
+```bash
+npm test
+npm run build
+```
+
+The test suite covers natural-language dates, CSV imports, snapshot compatibility, local storage, focus-record idempotency, and corrupted-data recovery.
+
+## Your data
+
+Locado currently stores its snapshot in browser `localStorage`. No task data is sent to a server.
+
+- Back up regularly with **Import / Export → Export JSON backup**.
+- Browser site data is isolated by origin. Keep using `http://localhost:1420` rather than switching between `localhost`, `127.0.0.1`, or different ports.
+- Clearing site data or switching browsers can remove or hide your local snapshot. Export before doing either.
+
+See the [中文使用与 WSL 指南](docs/zh-CN.md) for the one-click Windows/WSL workflow.
+
+## Project structure
+
+```text
+src/                 Application, storage, parsing, and UI
+public/              PWA manifest, service worker, and icons
+tests/               Node.js regression tests
+scripts/             Windows + WSL development scripts
+docs/                Guides and application screenshots
+.github/             CI, issue forms, and pull request template
+```
+
+## Roadmap
+
+- Tauri + SQLite storage adapter
+- Mobile navigation and narrow-screen layouts
+- Repeatable browser end-to-end tests
+- Additional import and export options
+
+## Community
+
+- [Contributing guide](CONTRIBUTING.md)
+- [Security policy](SECURITY.md)
+- [Changelog](CHANGELOG.md)
+
+## License
+
+[MIT](LICENSE) © 2026 Maobuchiyugutou

@@ -24,18 +24,9 @@ fi
 nvm use --lts >/dev/null 2>&1 || true
 echo "node: $(node -v)   npm: $(npm -v)"
 
-# --- 2) 复制项目源码到 ext4(~/Locado) ---
-DEST="$HOME/Locado"
-echo "=== copying project to $DEST ==="
-mkdir -p "$DEST"
-for f in src index.html package.json tsconfig.json vite.config.ts README.md; do
-  if [ -e "/mnt/e/Locado/$f" ]; then cp -r "/mnt/e/Locado/$f" "$DEST/"; fi
-done
-ls -1 "$DEST"
+# --- 2) 全量同步源码并安装依赖 ---
+bash /mnt/e/Locado/scripts/wsl-run.sh || { echo "SETUP_FAILED"; exit 1; }
 
-# --- 3) 安装依赖 ---
-cd "$DEST" || exit 1
-echo "=== npm install ==="
-npm install --no-audit --no-fund || { echo "NPM_INSTALL_FAILED"; exit 1; }
-
-echo "SETUP_DONE node_modules=$(test -d node_modules && echo yes || echo no)"
+# --- 3) 类型检查与生产构建 ---
+cd "$HOME/Locado" || exit 1
+npm run build || { echo "BUILD_FAILED"; exit 1; }
