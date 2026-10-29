@@ -29,6 +29,8 @@ export interface Task {
   title: string;
   note: string;
   priority: Priority;
+  important?: boolean; // 四象限手工分类;缺省时按原优先级映射
+  urgent?: boolean;
   completed: boolean;
   completedAt: number | null;
   dueDate: number | null; // epoch ms;null 表示无日期

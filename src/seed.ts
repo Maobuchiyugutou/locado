@@ -1,4 +1,4 @@
-import type { Snapshot, Task } from "./types";
+import type { Snapshot, Task } from "./types.ts";
 
 export const INBOX_ID = "inbox";
 

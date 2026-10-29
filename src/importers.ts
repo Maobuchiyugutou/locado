@@ -4,9 +4,9 @@
 // Reminder, Repeat, Priority, Status, Completed Time, Order, Timezone, Is All Day,
 // Is Floating, Column Name, Column Order, View Mode, taskId, parentId
 
-import type { Priority, Project, Tag, Task } from "./types";
-import { uid } from "./db";
-import { PROJECT_COLORS } from "./types";
+import type { Priority, Project, Tag, Task } from "./types.ts";
+import { uid } from "./db.ts";
+import { PROJECT_COLORS } from "./types.ts";
 
 // 一个容错的 CSV 解析器:支持引号包裹、字段内逗号/换行、"" 转义。
 export function parseCsv(text: string): string[][] {
@@ -50,6 +50,11 @@ function toEpoch(v: string): number | null {
   return Number.isNaN(t) ? null : t;
 }
 
+function hasExplicitTime(v: string): boolean {
+  if (toEpoch(v) == null) return false;
+  return /(?:^|[T\s])([01]?\d|2[0-3]):([0-5]\d)(?::([0-5]\d))?(?:\.\d+)?(?:\s*[AP]M)?(?:Z|[+-]\d{2}:?\d{2})?\s*$/i.test(v.trim());
+}
+
 export function importFromTickTickCsv(text: string): ImportResult {
   const rows = parseCsv(text);
 
@@ -68,6 +73,7 @@ export function importFromTickTickCsv(text: string): ImportResult {
   const iTags = at("Tags");
   const iContent = at("Content");
   const iDue = at("Due Date");
+  const iCompleted = at("Completed Time");
   const iPrio = at("Priority");
   const iStatus = at("Status");
   const iTaskId = at("taskId");
@@ -124,8 +130,9 @@ export function importFromTickTickCsv(text: string): ImportResult {
       note: iContent >= 0 ? (r[iContent] ?? "") : "",
       priority: iPrio >= 0 ? toPriority(r[iPrio]) : 0,
       completed: done,
-      completedAt: done ? Date.now() : null,
+      completedAt: done ? ((iCompleted >= 0 ? toEpoch(r[iCompleted]) : null) ?? Date.now()) : null,
       dueDate: iDue >= 0 ? toEpoch(r[iDue]) : null,
+      hasTime: iDue >= 0 ? hasExplicitTime(r[iDue]) : false,
       pinned: false,
       tags: tagIds,
       subtasks: [],

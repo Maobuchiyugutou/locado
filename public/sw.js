@@ -1,6 +1,6 @@
 // 离线应用壳:HTML 网络优先(便于升级),静态资源缓存优先(带 hash 的构建产物可长期复用)。
 // 只处理同源 GET;任务数据在 localStorage,不经过 Service Worker。
-const CACHE = "locado-shell-v2";
+const CACHE = "locado-shell-v4";
 const BASE = new URL("./", self.location.href).pathname;
 const INDEX = BASE + "index.html";
 const SHELL = [
@@ -15,7 +15,35 @@ const SHELL = [
 self.addEventListener("install", (event) => {
   event.waitUntil((async () => {
     const cache = await caches.open(CACHE);
-    await cache.addAll(SHELL);
+    const indexResponse = await fetch(INDEX, { cache: "no-store" });
+    if (!indexResponse.ok) {
+      throw new Error(`无法预缓存应用入口: HTTP ${indexResponse.status}`);
+    }
+
+    const html = await indexResponse.clone().text();
+    const assets = new Set();
+    const attribute = (tag, name) => {
+      const match = tag.match(new RegExp(`\\s${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, "i"));
+      return match ? (match[1] ?? match[2] ?? match[3] ?? "") : "";
+    };
+    const markup = html.replace(/<!--[\s\S]*?-->/g, "");
+    for (const match of markup.matchAll(/<(?:script|link)\b[^>]*>/gi)) {
+      const tag = match[0];
+      const rel = attribute(tag, "rel").toLowerCase().split(/\s+/);
+      const isScript = /^<script\b/i.test(tag);
+      const isAssetLink = /^<link\b/i.test(tag)
+        && (rel.includes("stylesheet") || rel.includes("modulepreload"));
+      if (!isScript && !isAssetLink) continue;
+
+      const reference = attribute(tag, isScript ? "src" : "href");
+      if (!reference) continue;
+      const url = new URL(reference, indexResponse.url);
+      if (url.origin === self.location.origin) assets.add(url.pathname + url.search);
+    }
+
+    // addAll 任一核心或构建资源失败都会拒绝安装,避免产生不完整的离线版本。
+    await cache.addAll([...new Set([...SHELL.filter((url) => url !== INDEX), ...assets])]);
+    await cache.put(INDEX, indexResponse);
     await self.skipWaiting();
   })());
 });
@@ -44,7 +72,7 @@ self.addEventListener("fetch", (event) => {
   if (request.mode === "navigate") {
     event.respondWith((async () => {
       try {
-        const response = await fetch(request);
+        const response = await fetch(request, { cache: "no-store" });
         if (response.ok) {
           const cache = await caches.open(CACHE);
           await cache.put(INDEX, response.clone());

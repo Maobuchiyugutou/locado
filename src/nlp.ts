@@ -43,15 +43,16 @@ function detectDate(text: string): DateHit {
   if (m) { const n = cnToNum(m[1]); if (n != null) { const d = today(); d.setDate(d.getDate() + n); hits.push(m[0]); return { date: d, hits }; } }
 
   // 周X / 星期X / 礼拜X(可带 下/本/这)
-  m = text.match(/(下|本|这)?\s*(?:周|星期|礼拜)\s*([一二三四五六天日\d])/);
+  m = text.match(/(下|本|这周|这)?\s*(?:周|星期|礼拜)\s*([一二三四五六天日\d])/);
   if (m) {
     const WD: Record<string, number> = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 日: 0, 天: 0 };
     let target = /\d/.test(m[2]) ? Number(m[2]) % 7 : WD[m[2]];
     if (target != null) {
-      const base = today(); const cur = base.getDay();
+      const base = today(); const cur = base.getDay() || 7;
+      target = target || 7;
       let add = (target - cur + 7) % 7;
-      if (m[1] === "下") add += 7;
-      else if ((m[1] === "本" || m[1] === "这") && add > 0) add -= 7; // 本周一 = 本周期内、可能已过去的那天
+      if (m[1] === "下") add = 7 - cur + target;
+      else if (m[1] === "本" || m[1] === "这" || m[1] === "这周") add = target - cur;
       base.setDate(base.getDate() + add);
       hits.push(m[0]); return { date: base, hits };
     }

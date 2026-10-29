@@ -38,6 +38,133 @@ function el(tag: string, props: Props = {}, ...kids: (Node | string)[]): HTMLEle
   return n;
 }
 
+function keyboardActivate(node: HTMLElement, action: () => void): void {
+  node.addEventListener("keydown", (e) => {
+    if (e.target !== node || (e.key !== "Enter" && e.key !== " ")) return;
+    e.preventDefault();
+    action();
+  });
+}
+
+// 统一的线性图标,替代导航和控件里混用的 emoji/符号。
+const ICONS: Record<string, string> = {
+  sun: "M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z",
+  moon: "M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z",
+  "calendar-week": "M8 2v4m8-4v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2ZM8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01M16 18h.01",
+  calendar: "M8 2v4m8-4v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z",
+  layers: "M12 2 2 7l10 5 10-5-10-5ZM2 12l10 5 10-5M2 17l10 5 10-5",
+  grid: "M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z",
+  flame: "M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.07-2.14-.22-4.05 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.15.43-2.29 1-3a2.5 2.5 0 0 0 2.5 2.5Z",
+  clock: "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20ZM12 8v4l3 2",
+  "check-circle": "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20ZM8 12l3 3 6-6",
+  "check-square": "M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2ZM8 12l3 3 6-6",
+  check: "M5 12.5 10 17.5 19.5 7",
+  chevron: "m6 9 6 6 6-6",
+  sync: "M8 3 4 7l4 4M4 7h16M16 21l4-4-4-4M20 17H4",
+  bell: "M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9ZM10 21a2 2 0 0 0 4 0",
+  pin: "M12 17v5M9 10.76V7a3 3 0 0 1 6 0v3.76M5 9h14l-2 5H7L5 9Z",
+};
+
+function icon(name: string, className = ""): HTMLElement {
+  const span = el("span", { class: "app-icon" + (className ? " " + className : ""), "aria-hidden": "true" });
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "1.8");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  svg.setAttribute("focusable", "false");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", ICONS[name]);
+  svg.append(path);
+  span.append(svg);
+  return span;
+}
+
+interface SelectOption { value: string; label: string }
+interface SelectControl { el: HTMLElement; getValue: () => string }
+let closeOpenSelect: (() => void) | null = null;
+
+// 自绘下拉:原生 select 的弹出层无法按玻璃风格统一,这里保留按钮/菜单、
+// 键盘方向键、Escape、点外部关闭和边界向上展开。
+function selectControl(options: SelectOption[], initial: string, onChange: (value: string) => void = () => {}): SelectControl {
+  let value = options.some((o) => o.value === initial) ? initial : (options[0]?.value ?? "");
+  const label = el("span", { class: "select-label" });
+  const btn = el("button", { class: "select", type: "button", "aria-haspopup": "listbox", "aria-expanded": "false" });
+  const menu = el("div", { class: "select-menu", role: "listbox" });
+  const wrap = el("div", { class: "select-wrap" }, btn, menu);
+  const updateLabel = () => { label.textContent = options.find((o) => o.value === value)?.label ?? "请选择"; };
+  btn.append(label, icon("chevron", "select-chevron"));
+  updateLabel();
+
+  let open = false;
+  const onDocClick = (ev: Event) => { if (!wrap.contains(ev.target as Node)) closeMenu(); };
+  const onDocKey = (ev: KeyboardEvent) => {
+    if (ev.key !== "Escape") return;
+    ev.preventDefault(); ev.stopImmediatePropagation();
+    closeMenu(); btn.focus();
+  };
+
+  function closeMenu(): void {
+    if (!open) return;
+    open = false;
+    wrap.classList.remove("open", "up");
+    btn.setAttribute("aria-expanded", "false");
+    document.removeEventListener("click", onDocClick);
+    document.removeEventListener("keydown", onDocKey, true);
+    if (closeOpenSelect === closeMenu) closeOpenSelect = null;
+  }
+
+  function choose(v: string): void {
+    value = v;
+    updateLabel();
+    closeMenu();
+    btn.focus();
+    onChange(v);
+  }
+
+  function openMenu(): void {
+    if (open) { closeMenu(); return; }
+    closeOpenSelect?.();
+    open = true;
+    const rect = btn.getBoundingClientRect();
+    if (window.innerHeight - rect.bottom < 280 && rect.top > 280) wrap.classList.add("up");
+    wrap.classList.add("open");
+    btn.setAttribute("aria-expanded", "true");
+    menu.innerHTML = "";
+    let selectedBtn: HTMLElement | null = null;
+    for (const opt of options) {
+      const selected = opt.value === value;
+      const b = el("button", {
+        class: "select-option" + (selected ? " on" : ""), type: "button", role: "option",
+        "aria-selected": selected ? "true" : "false",
+        onClick: (ev: Event) => { ev.stopPropagation(); choose(opt.value); },
+      }, el("span", { class: "option-label" }, opt.label), selected ? icon("check", "option-check") : el("span"));
+      if (selected) selectedBtn = b;
+      menu.append(b);
+    }
+    document.addEventListener("click", onDocClick);
+    document.addEventListener("keydown", onDocKey, true);
+    closeOpenSelect = closeMenu;
+    setTimeout(() => { (selectedBtn ?? menu.querySelector("button"))?.focus(); }, 0);
+  }
+
+  btn.addEventListener("click", (ev) => { ev.stopPropagation(); openMenu(); });
+  menu.addEventListener("keydown", (ev) => {
+    if (ev.key !== "ArrowDown" && ev.key !== "ArrowUp") return;
+    ev.preventDefault();
+    const buttons = [...menu.querySelectorAll<HTMLButtonElement>("button")];
+    if (!buttons.length) return;
+    const current = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    const delta = ev.key === "ArrowDown" ? 1 : -1;
+    const next = current < 0 ? (delta > 0 ? 0 : buttons.length - 1) : (current + delta + buttons.length) % buttons.length;
+    buttons[next].focus();
+  });
+
+  return { el: wrap, getValue: () => value };
+}
+
 const DAY = 86400000;
 function startOfToday(): number { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); }
 function firstOfMonth(d: Date): Date { return new Date(d.getFullYear(), d.getMonth(), 1); }
@@ -72,19 +199,21 @@ function remindLabel(min: number): string { if (min === 0) return "准时"; if (
 
 /* ============ 视图与过滤 ============ */
 const SMART = [
-  { id: "smart:today", name: "今天", ico: "☀️" },
-  { id: "smart:next7", name: "最近 7 天", ico: "🗓️" },
-  { id: "smart:all", name: "全部", ico: "🗂️" },
-  { id: "calendar", name: "日历", ico: "📅" },
-  { id: "matrix", name: "四象限", ico: "⊞" },
+  { id: "smart:today", name: "今天", ico: "sun" },
+  { id: "smart:next7", name: "最近 7 天", ico: "calendar-week" },
+  { id: "smart:all", name: "全部", ico: "layers" },
+  { id: "calendar", name: "日历", ico: "calendar" },
+  { id: "matrix", name: "四象限", ico: "grid" },
 ];
 
-const QUADRANTS: { p: Priority; title: string; sub: string; color: string }[] = [
-  { p: 5, title: "重要且紧急", sub: "马上做", color: "var(--p-high)" },
-  { p: 3, title: "重要不紧急", sub: "安排做", color: "var(--p-mid)" },
-  { p: 1, title: "紧急不重要", sub: "可委托", color: "var(--p-low)" },
-  { p: 0, title: "不重要不紧急", sub: "少做", color: "var(--p-none)" },
+const QUADRANTS = [
+  { important: true, urgent: true, title: "重要且紧急", sub: "马上做", color: "var(--p-high)" },
+  { important: true, urgent: false, title: "重要不紧急", sub: "安排做", color: "var(--p-mid)" },
+  { important: false, urgent: true, title: "紧急不重要", sub: "可委托", color: "var(--p-low)" },
+  { important: false, urgent: false, title: "不重要不紧急", sub: "少做", color: "var(--p-none)" },
 ];
+function isImportant(t: Task): boolean { return t.important ?? (t.priority === 5 || t.priority === 3); }
+function isUrgent(t: Task): boolean { return t.urgent ?? (t.priority === 5 || t.priority === 1); }
 let dragTaskId: string | null = null;
 
 function matchesRule(t: Task, r: Filter["rule"]): boolean {
@@ -158,6 +287,7 @@ function sortForView(v: string, items: Task[]): Task[] {
 }
 
 function viewName(v: string): string {
+  if (v === "smart:completed") return "已完成";
   if (v === "calendar") return "日历";
   if (v === "matrix") return "四象限";
   if (v === "habits") return "习惯打卡";
@@ -174,7 +304,7 @@ function viewName(v: string): string {
 function renderSidebar(): void {
   const bar = $("#sidebar");
   bar.innerHTML = "";
-  bar.append(el("div", { class: "brand" }, el("div", { class: "logo" }, "L"), el("div", { class: "name" }, "Locado")));
+  bar.append(el("div", { class: "brand" }, el("div", { class: "logo" }, icon("check", "logo-icon")), el("div", { class: "name" }, "Locado")));
 
   for (const s of SMART) {
     const noCount = s.id === "calendar" || s.id === "matrix";
@@ -187,10 +317,17 @@ function renderSidebar(): void {
     bar.append(navItem({ id: "project:" + p.id, dot: p.color, label: p.name, count: activeCount("project:" + p.id), onDel: p.id === INBOX_ID ? undefined : () => removeProject(p.id) }));
   }
 
-  if (snap.tags.length) {
+  {
     const tc = isCollapsed("tags", true);
-    bar.append(groupHeader("tags", "标签", tc));
-    if (!tc) for (const t of snap.tags) bar.append(navItem({ id: "tag:" + t.id, dot: t.color, label: t.name, count: activeCount("tag:" + t.id) }));
+    bar.append(groupHeader("tags", "标签", tc, () => addTag()));
+    if (!tc) for (const t of snap.tags) bar.append(navItem({
+      id: "tag:" + t.id,
+      dot: t.color,
+      label: t.name,
+      count: activeCount("tag:" + t.id),
+      onEdit: () => renameTag(t.id),
+      onDel: () => removeTag(t.id),
+    }));
   }
 
   {
@@ -202,10 +339,10 @@ function renderSidebar(): void {
   }
 
   const tray = el("div", { class: "tray" });
-  for (const [id, ico, label] of [["habits", "🔥", "习惯"], ["focus", "🍅", "专注"], ["smart:completed", "✅", "已完成"]] as [string, string, string][]) {
-    tray.append(el("button", { class: "tray-btn" + (view === id ? " active" : ""), title: label, onClick: () => { view = id; render(); } }, ico));
+  for (const [id, ico, label] of [["habits", "flame", "习惯"], ["focus", "clock", "专注"], ["smart:completed", "check-circle", "已完成"]] as [string, string, string][]) {
+    tray.append(el("button", { class: "tray-btn" + (view === id ? " active" : ""), title: label, onClick: () => { view = id; render(); } }, icon(ico)));
   }
-  tray.append(el("button", { class: "tray-btn", title: "导入 / 导出", onClick: openDataModal }, "⇄"));
+  tray.append(el("button", { class: "tray-btn", title: "导入 / 导出", onClick: openDataModal }, icon("sync")));
   bar.append(el("div", { class: "sidebar-foot" }, tray));
 }
 
@@ -216,22 +353,35 @@ function setCollapsed(key: string, v: boolean): void {
   try { localStorage.setItem("locado.collapse." + key, v ? "1" : "0"); } catch { /* ignore */ }
 }
 function groupHeader(key: string, text: string, collapsed: boolean, onAdd?: () => void): HTMLElement {
-  const h = el("div", { class: "nav-group-label collapsible", onClick: () => { setCollapsed(key, !collapsed); renderSidebar(); } },
-    el("span", { class: "nav-chevron" + (collapsed ? " collapsed" : "") }, "⌄"),
-    el("span", { class: "gl-text" }, text));
-  if (onAdd) h.append(el("button", { class: "group-add", title: "新建", onClick: (e: Event) => { e.stopPropagation(); onAdd(); } }, "+"));
+  const h = el("div", { class: "nav-group-label collapsible" });
+  const toggle = el("button", {
+    class: "group-toggle",
+    type: "button",
+    "aria-expanded": String(!collapsed),
+    "aria-label": `${collapsed ? "展开" : "折叠"}${text}分组`,
+    onClick: () => { setCollapsed(key, !collapsed); renderSidebar(); },
+  }, el("span", { class: "gl-text" }, text), icon("chevron", "nav-chevron" + (collapsed ? " collapsed" : "")));
+  h.append(toggle);
+  if (onAdd) h.append(el("button", { class: "group-add", type: "button", title: `新建${text}`, onClick: onAdd }, "+"));
   return h;
 }
 
 function navItem(o: { id: string; ico?: string; dot?: string; label: string; count: number; onDel?: () => void; onEdit?: () => void }): HTMLElement {
   const kids: (Node | string)[] = [];
-  if (o.ico) kids.push(el("span", { class: "ico" }, o.ico));
+  if (o.ico) kids.push(icon(o.ico, "ico"));
   if (o.dot) kids.push(el("span", { class: "dot", style: `background:${o.dot}` }));
   kids.push(el("span", { class: "label" }, o.label));
   if (o.count > 0) kids.push(el("span", { class: "count" }, String(o.count)));
-  if (o.onEdit) kids.push(el("button", { class: "del", title: "编辑", onClick: (e: Event) => { e.stopPropagation(); o.onEdit!(); } }, "✎"));
-  if (o.onDel) kids.push(el("button", { class: "del", title: "删除", onClick: (e: Event) => { e.stopPropagation(); o.onDel!(); } }, "×"));
-  return el("button", { class: "nav-item" + (view === o.id ? " active" : ""), onClick: () => { view = o.id; render(); } }, ...kids);
+  const wrap = el("div", { class: "nav-item" + (view === o.id ? " active" : "") });
+  wrap.append(el("button", {
+    class: "nav-select",
+    type: "button",
+    "aria-current": view === o.id ? "page" : null,
+    onClick: () => { view = o.id; render(); },
+  }, ...kids));
+  if (o.onEdit) wrap.append(el("button", { class: "del", type: "button", title: `编辑${o.label}`, onClick: o.onEdit }, "✎"));
+  if (o.onDel) wrap.append(el("button", { class: "del", type: "button", title: `删除${o.label}`, onClick: o.onDel }, "×"));
+  return wrap;
 }
 
 /* ============ 主区 ============ */
@@ -246,7 +396,7 @@ function renderMain(): void {
   if (view === "habits") { addRow.style.display = "none"; $("#view-sub").textContent = ""; renderHabits(list); return; }
   if (view === "focus") { addRow.style.display = "none"; $("#view-sub").textContent = ""; renderFocus(list); return; }
 
-  addRow.style.display = "";
+  addRow.style.display = view === "smart:completed" ? "none" : "";
   $("#view-sub").textContent = view === "smart:completed" ? "" : `${activeCount(view)} 个任务`;
 
   const inner = el("div", { class: "list-inner" });
@@ -265,19 +415,27 @@ function renderMain(): void {
 function taskRow(t: Task): HTMLElement {
   const check = el("button", { class: `check p${t.priority}` + (t.completed ? " done" : ""), title: "完成", onClick: (e: Event) => { e.stopPropagation(); toggleDone(t); } });
   const meta = el("div", { class: "task-meta" });
-  if (t.dueDate != null) meta.append(el("span", { class: "chip due" + (!t.completed && isOverdue(t.dueDate) ? " overdue" : "") }, "📅 " + dueLabel(t.dueDate) + (t.hasTime ? " " + fmtTime(t.dueDate) : "")));
-  if (t.reminderMinutesBefore != null) meta.append(el("span", { class: "chip" }, "⏰ " + remindLabel(t.reminderMinutesBefore)));
+  if (t.dueDate != null) meta.append(el("span", { class: "chip due" + (!t.completed && isOverdue(t.dueDate) ? " overdue" : "") }, icon("calendar", "chip-icon"), dueLabel(t.dueDate) + (t.hasTime ? " " + fmtTime(t.dueDate) : "")));
+  if (t.reminderMinutesBefore != null) meta.append(el("span", { class: "chip" }, icon("bell", "chip-icon"), remindLabel(t.reminderMinutesBefore)));
   const doneSubs = t.subtasks.filter((s) => s.completed).length;
-  if (t.subtasks.length) meta.append(el("span", { class: "chip" }, `☑ ${doneSubs}/${t.subtasks.length}`));
+  if (t.subtasks.length) meta.append(el("span", { class: "chip" }, icon("check-square", "chip-icon"), `${doneSubs}/${t.subtasks.length}`));
   for (const tagId of t.tags) {
     const tag = snap.tags.find((x) => x.id === tagId);
     if (tag) meta.append(el("span", { class: "chip tag", style: `color:${tag.color}` }, tag.name));
   }
   const body = el("div", { class: "task-body" }, el("div", { class: "task-title" }, t.title || "无标题"));
   if (meta.childElementCount) body.append(meta);
-  const row = el("div", { class: "task" + (t.completed ? " done" : "") + (selectedId === t.id ? " selected" : ""), draggable: "true", onClick: () => openDetail(t.id) }, check, body);
+  const row = el("div", {
+    class: "task" + (t.completed ? " done" : "") + (selectedId === t.id ? " selected" : ""),
+    draggable: "true",
+    role: "button",
+    tabIndex: "0",
+    "aria-label": `编辑任务 ${t.title || "无标题"}`,
+    onClick: () => openDetail(t.id),
+  }, check, body);
   row.dataset.id = t.id;
-  if (t.pinned) row.append(el("span", { class: "pin" }, "📌"));
+  keyboardActivate(row, () => openDetail(t.id));
+  if (t.pinned) row.append(el("span", { class: "pin", title: "已置顶" }, icon("pin", "pin-icon")));
   return row;
 }
 
@@ -345,18 +503,50 @@ function renderCalendar(list: HTMLElement): void {
     const d = new Date(start); d.setDate(start.getDate() + i);
     const inMonth = d.getMonth() === calMonth.getMonth();
     const cell = el("div", { class: "cal-cell" + (inMonth ? "" : " out") + (dayKey(d) === todayKey ? " today" : "") });
-    cell.append(el("div", { class: "cal-date" }, String(d.getDate())));
+    const theDay = new Date(d);
+    cell.append(el("button", {
+      class: "cal-date",
+      type: "button",
+      title: `在 ${d.getMonth() + 1} 月 ${d.getDate()} 日新建任务`,
+      onClick: (e: Event) => { e.stopPropagation(); void quickAddOn(theDay); },
+    }, String(d.getDate())));
     const dayTasks = snap.tasks.filter((t) => !t.completed && t.dueDate != null && dayKey(new Date(t.dueDate)) === dayKey(d)).sort(sortTasks);
     for (const t of dayTasks.slice(0, 3)) {
-      cell.append(el("div", { class: "cal-ev", onClick: (e: Event) => { e.stopPropagation(); openDetail(t.id); } }, el("span", { class: `evdot p${t.priority}` }), el("span", { class: "evtitle" }, t.title || "无标题")));
+      const event = el("div", {
+        class: "cal-ev",
+        role: "button",
+        tabIndex: "0",
+        title: t.title || "无标题",
+        onClick: (e: Event) => { e.stopPropagation(); openDetail(t.id); },
+      }, el("span", { class: `evdot p${t.priority}` }), el("span", { class: "evtitle" }, t.title || "无标题"));
+      keyboardActivate(event, () => openDetail(t.id));
+      cell.append(event);
     }
-    if (dayTasks.length > 3) cell.append(el("div", { class: "cal-more" }, `+${dayTasks.length - 3}`));
-    const theDay = new Date(d);
+    if (dayTasks.length > 3) {
+      cell.append(el("button", {
+        class: "cal-more",
+        type: "button",
+        title: `查看当天全部 ${dayTasks.length} 个任务`,
+        onClick: (e: Event) => { e.stopPropagation(); openDayTasks(theDay, dayTasks); },
+      }, `+${dayTasks.length - 3}`));
+    }
     cell.addEventListener("click", () => quickAddOn(theDay));
     grid.append(cell);
   }
   wrap.append(head, dow, grid);
   list.append(wrap);
+}
+
+function openDayTasks(d: Date, tasks: Task[]): void {
+  const body = el("div", { class: "day-task-list" });
+  const m = modal(`${d.getMonth() + 1} 月 ${d.getDate()} 日 · ${tasks.length} 个任务`, body, []);
+  for (const t of tasks) {
+    body.append(el("button", {
+      class: "day-task",
+      type: "button",
+      onClick: () => { m.close(); openDetail(t.id); },
+    }, el("span", { class: `evdot p${t.priority}` }), el("span", { class: "day-task-title" }, t.title || "无标题"), t.hasTime && t.dueDate != null ? el("span", { class: "chip" }, fmtTime(t.dueDate)) : el("span")));
+  }
 }
 
 async function quickAddOn(d: Date): Promise<void> {
@@ -375,12 +565,20 @@ function renderMatrix(list: HTMLElement): void {
     cell.style.setProperty("--qc", q.color);
     cell.append(el("div", { class: "mx-head" }, el("span", { class: "mx-dot" }), el("span", { class: "mx-title" }, q.title), el("span", { class: "mx-sub" }, q.sub)));
     const body = el("div", { class: "mx-body" });
-    const tasks = snap.tasks.filter((t) => !t.completed && t.priority === q.p).sort(sortTasks);
+    const tasks = snap.tasks.filter((t) => !t.completed && isImportant(t) === q.important && isUrgent(t) === q.urgent).sort(sortTasks);
     if (!tasks.length) body.append(el("div", { class: "mx-empty" }, "拖任务到这里"));
     for (const t of tasks) {
-      const chk = el("span", { class: "mx-check", onClick: (e: Event) => { e.stopPropagation(); toggleDone(t); } });
-      const card = el("div", { class: "mx-task", draggable: "true", onClick: () => openDetail(t.id) }, chk, el("span", { class: "mx-tt" }, t.title || "无标题"));
+      const chk = el("button", { class: "mx-check", type: "button", title: "完成任务", onClick: (e: Event) => { e.stopPropagation(); toggleDone(t); } });
+      const card = el("div", {
+        class: "mx-task",
+        draggable: "true",
+        role: "button",
+        tabIndex: "0",
+        "aria-label": `编辑任务 ${t.title || "无标题"}`,
+        onClick: () => openDetail(t.id),
+      }, chk, el("span", { class: "mx-tt" }, t.title || "无标题"));
       card.dataset.id = t.id;
+      keyboardActivate(card, () => openDetail(t.id));
       card.addEventListener("dragstart", () => { dragTaskId = t.id; setTimeout(() => card.classList.add("dragging"), 0); });
       card.addEventListener("dragend", () => card.classList.remove("dragging"));
       body.append(card);
@@ -391,7 +589,12 @@ function renderMatrix(list: HTMLElement): void {
       e.preventDefault(); cell.classList.remove("over");
       if (!dragTaskId) return;
       const t = snap.tasks.find((x) => x.id === dragTaskId); dragTaskId = null;
-      if (t && t.priority !== q.p) { t.priority = q.p; t.updatedAt = Date.now(); await db.saveTask(t); }
+      if (t && (isImportant(t) !== q.important || isUrgent(t) !== q.urgent)) {
+        t.important = q.important;
+        t.urgent = q.urgent;
+        t.updatedAt = Date.now();
+        await db.saveTask(t);
+      }
       render();
     });
     cell.append(body);
@@ -426,14 +629,14 @@ function habitCard(h: Habit): HTMLElement {
     const d = new Date(); d.setDate(d.getDate() - i);
     const key = dayKey(d);
     const on = h.checkins.includes(key);
-    const cell = el("div", { class: "hb-day" + (on ? " on" : "") + (i === 0 ? " today" : ""), title: `${d.getMonth() + 1}/${d.getDate()} · ${on ? "已打卡,点击取消" : "点击打卡"}`, style: on ? `background:${h.color};border-color:${h.color};color:#fff` : "" }, String(d.getDate()));
+    const cell = el("button", { class: "hb-day" + (on ? " on" : "") + (i === 0 ? " today" : ""), type: "button", "aria-pressed": String(on), title: `${d.getMonth() + 1}/${d.getDate()} · ${on ? "已打卡,点击取消" : "点击打卡"}`, style: on ? `background:${h.color};border-color:${h.color};color:#fff` : "" }, String(d.getDate()));
     cell.addEventListener("click", () => toggleCheckin(h, key));
     strip.append(cell);
   }
   const btn = el("button", { class: "hb-check" + (checked ? " done" : ""), style: checked ? `background:${h.color};border-color:${h.color};color:#fff` : `border-color:${h.color};color:${h.color}`, onClick: () => toggleCheckin(h) }, checked ? "今日已打卡 ✓" : "打卡");
   const del = el("button", { class: "hb-del", title: "删除", onClick: () => removeHabit(h) }, "×");
   return el("div", { class: "hb-card" },
-    el("div", { class: "hb-top" }, el("span", { class: "hb-icon", style: `background:${h.color}22;color:${h.color}` }, h.icon), el("div", { class: "hb-name" }, h.name), el("span", { class: "hb-streak" }, `🔥 ${habitStreak(h)}`), del),
+    el("div", { class: "hb-top" }, el("span", { class: "hb-icon", style: `background:${h.color}22;color:${h.color}` }, h.icon), el("div", { class: "hb-name" }, h.name), el("span", { class: "hb-streak" }, icon("flame", "streak-icon"), String(habitStreak(h))), del),
     strip, btn);
 }
 
@@ -464,14 +667,15 @@ function workMin(): number { return minPref("locado.work", 25); }
 function breakMin(): number { return minPref("locado.break", 5); }
 
 type FocusMode = "idle" | "work" | "break";
-const focus: { mode: FocusMode; running: boolean; remaining: number; endsAt: number; startedAt: number; taskId: string | null } =
-  { mode: "idle", running: false, remaining: workMin() * 60, endsAt: 0, startedAt: 0, taskId: null };
-
-function focusTotal(mode: FocusMode): number { return (mode === "break" ? breakMin() : workMin()) * 60; }
+const focus: { mode: FocusMode; running: boolean; remaining: number; total: number; endsAt: number; startedAt: number; taskId: string | null } =
+  { mode: "idle", running: false, remaining: workMin() * 60, total: workMin() * 60, endsAt: 0, startedAt: 0, taskId: null };
 function fmt(sec: number): string { const m = Math.floor(sec / 60), s = sec % 60; return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`; }
 
+let tickDay = dayKey(new Date());
 function tick(): void {
   checkReminders();
+  const currentDay = dayKey(new Date());
+  if (currentDay !== tickDay) { tickDay = currentDay; render(); }
   if (!focus.running) return;
   const rem = Math.max(0, Math.round((focus.endsAt - Date.now()) / 1000));
   focus.remaining = rem;
@@ -518,8 +722,12 @@ function toast(msg: string, opts: { ms?: number; action?: { label: string; run: 
   setTimeout(() => { node.classList.add("hide"); setTimeout(() => node.remove(), 300); }, opts.ms ?? 4500);
 }
 function focusStart(): void {
-  if (focus.mode === "idle") { focus.mode = "work"; focus.remaining = workMin() * 60; focus.startedAt = Date.now(); }
-  else if (!focus.startedAt) focus.startedAt = Date.now() - (focusTotal(focus.mode) - focus.remaining) * 1000;
+  if (focus.mode === "idle") {
+    focus.mode = "work";
+    focus.total = workMin() * 60;
+    focus.remaining = focus.total;
+    focus.startedAt = Date.now();
+  } else if (!focus.startedAt) focus.startedAt = Date.now() - (focus.total - focus.remaining) * 1000;
   focus.endsAt = Date.now() + focus.remaining * 1000;
   focus.running = true;
   if (view === "focus") renderMain();
@@ -530,17 +738,27 @@ function focusPause(): void {
   if (view === "focus") renderMain();
 }
 function focusReset(): void {
-  focus.running = false; focus.mode = "idle"; focus.remaining = workMin() * 60; focus.startedAt = 0;
+  focus.running = false;
+  focus.mode = "idle";
+  focus.total = workMin() * 60;
+  focus.remaining = focus.total;
+  focus.startedAt = 0;
   if (view === "focus") renderMain();
 }
 async function focusComplete(): Promise<void> {
   focus.running = false;
   if (focus.mode === "work") {
-    const rec: FocusRecord = { id: uid(), startedAt: focus.startedAt || Date.now() - workMin() * 60000, minutes: workMin(), taskId: focus.taskId };
+    const rec: FocusRecord = { id: uid(), startedAt: focus.startedAt || Date.now() - focus.total * 1000, minutes: Math.round(focus.total / 60), taskId: focus.taskId };
     snap.focusRecords.push(rec); await db.saveFocusRecord(rec);
-    focus.mode = "break"; focus.remaining = breakMin() * 60; focus.startedAt = 0;
+    focus.mode = "break";
+    focus.total = breakMin() * 60;
+    focus.remaining = focus.total;
+    focus.startedAt = 0;
   } else {
-    focus.mode = "idle"; focus.remaining = workMin() * 60; focus.startedAt = 0;
+    focus.mode = "idle";
+    focus.total = workMin() * 60;
+    focus.remaining = focus.total;
+    focus.startedAt = 0;
   }
   if (view === "focus") renderMain();
 }
@@ -549,8 +767,7 @@ function updateFocusTime(): void {
   const te = document.querySelector("#focus-time"); if (te) te.textContent = fmt(focus.remaining);
   const ring = document.querySelector("#focus-ring") as HTMLElement | null;
   if (ring) {
-    const total = focusTotal(focus.mode === "idle" ? "work" : focus.mode);
-    const done = focus.mode === "idle" ? 0 : (1 - focus.remaining / total);
+    const done = focus.mode === "idle" ? 0 : (1 - focus.remaining / focus.total);
     ring.style.background = `conic-gradient(var(--accent) ${done * 360}deg, var(--bg-hover) 0)`;
   }
 }
@@ -558,8 +775,7 @@ function updateFocusTime(): void {
 function renderFocus(list: HTMLElement): void {
   const inner = el("div", { class: "list-inner focus-wrap" });
   const modeLabel = focus.mode === "break" ? "休息" : focus.mode === "work" ? "专注中" : "准备开始";
-  const total = focusTotal(focus.mode === "idle" ? "work" : focus.mode);
-  const done = focus.mode === "idle" ? 0 : (1 - focus.remaining / total);
+  const done = focus.mode === "idle" ? 0 : (1 - focus.remaining / focus.total);
 
   const ring = el("div", { class: "focus-ring", id: "focus-ring", style: `background:conic-gradient(var(--accent) ${done * 360}deg, var(--bg-hover) 0)` },
     el("div", { class: "focus-inner" }, el("div", { class: "focus-time", id: "focus-time" }, fmt(focus.remaining)), el("div", { class: "focus-mode" }, modeLabel)));
@@ -570,28 +786,39 @@ function renderFocus(list: HTMLElement): void {
   // 时长预设
   const durRow = el("div", { class: "chk-row center" });
   for (const m of [15, 25, 45]) {
-    durRow.append(el("button", { class: "chk" + (workMin() === m ? " on" : ""), onClick: () => { try { localStorage.setItem("locado.work", String(m)); } catch { /* ignore */ } if (!focus.running && focus.mode === "idle") focus.remaining = m * 60; renderMain(); } }, `${m} 分`));
+    const locked = focus.mode !== "idle";
+    durRow.append(el("button", {
+      class: "chk" + (workMin() === m ? " on" : ""),
+      type: "button",
+      disabled: locked,
+      title: locked ? "本次计时结束后可修改时长" : `设为 ${m} 分钟`,
+      onClick: () => {
+        if (focus.mode !== "idle") return;
+        try { localStorage.setItem("locado.work", String(m)); } catch { /* ignore */ }
+        focus.total = m * 60;
+        focus.remaining = focus.total;
+        renderMain();
+      },
+    }, `${m} 分`));
   }
 
   // 关联任务
-  const sel = el("select", { class: "select", onChange: (e: Event) => { focus.taskId = (e.target as HTMLSelectElement).value || null; } }) as HTMLSelectElement;
-  sel.append(el("option", { value: "" }, "不关联任务"));
-  for (const t of snap.tasks.filter((x) => !x.completed)) {
-    const o = el("option", { value: t.id }, t.title || "无标题") as HTMLOptionElement;
-    if (focus.taskId === t.id) o.selected = true;
-    sel.append(o);
-  }
+  const sel = selectControl(
+    [{ value: "", label: "不关联任务" }, ...snap.tasks.filter((x) => !x.completed).map((t) => ({ value: t.id, label: t.title || "无标题" }))],
+    focus.taskId ?? "",
+    (v) => { focus.taskId = v || null; },
+  );
 
   // 今日统计
   const tk = dayKey(new Date());
   const today = snap.focusRecords.filter((r) => dayKey(new Date(r.startedAt)) === tk);
   const mins = today.reduce((a, r) => a + r.minutes, 0);
   const stats = el("div", { class: "focus-stats" },
-    el("div", { class: "fs-item" }, el("div", { class: "fs-num" }, `🍅 ${today.length}`), el("div", { class: "fs-label" }, "今日番茄")),
+    el("div", { class: "fs-item" }, el("div", { class: "fs-num" }, String(today.length)), el("div", { class: "fs-label" }, "今日番茄")),
     el("div", { class: "fs-item" }, el("div", { class: "fs-num" }, `${mins}`), el("div", { class: "fs-label" }, "专注分钟")),
   );
 
-  inner.append(ring, el("div", { class: "focus-ctrl" }, startBtn, resetBtn), durRow, el("div", { class: "focus-task" }, sel), stats);
+  inner.append(ring, el("div", { class: "focus-ctrl" }, startBtn, resetBtn), durRow, el("div", { class: "focus-task" }, sel.el), stats);
   list.append(inner);
 }
 
@@ -617,6 +844,11 @@ function detailContent(t: Task, id: string): HTMLElement {
   ([[5, "高"], [3, "中"], [1, "低"], [0, "无"]] as [Priority, string][]).forEach(([p, lbl]) => {
     prioSeg.append(el("button", { class: `p${p}` + (t.priority === p ? ` on p${p}` : ""), onClick: () => { t.priority = p; t.updatedAt = Date.now(); save(t); openDetail(id); } }, lbl));
   });
+  const quadRow = el("div", { class: "chk-row" });
+  quadRow.append(
+    toggleChip("重要", isImportant(t), (v) => { t.important = v; t.updatedAt = Date.now(); save(t); }),
+    toggleChip("紧急", isUrgent(t), (v) => { t.urgent = v; t.updatedAt = Date.now(); save(t); }),
+  );
 
   const date = el("input", { class: "date-input", type: "date", value: toDateInput(t.dueDate) }) as HTMLInputElement;
   const time = el("input", { class: "date-input", type: "time", value: t.hasTime && t.dueDate != null ? fmtTime(t.dueDate) : "" }) as HTMLInputElement;
@@ -627,17 +859,17 @@ function detailContent(t: Task, id: string): HTMLElement {
     t.reminded = false; t.updatedAt = Date.now(); save(t);
   });
   time.addEventListener("change", () => { applyTime(t, time.value); t.reminded = false; t.updatedAt = Date.now(); save(t); openDetail(id); });
-  const remindSel = el("select", { class: "select" }) as HTMLSelectElement;
-  ([["", "无提醒"], ["0", "准时"], ["5", "提前 5 分钟"], ["15", "提前 15 分钟"], ["30", "提前 30 分钟"], ["60", "提前 1 小时"], ["1440", "提前 1 天"]] as [string, string][]).forEach(([v, l]) => { const o = el("option", { value: v }, l) as HTMLOptionElement; if (String(t.reminderMinutesBefore ?? "") === v) o.selected = true; remindSel.append(o); });
-  remindSel.addEventListener("change", () => { t.reminderMinutesBefore = remindSel.value === "" ? null : Number(remindSel.value); t.reminded = false; t.updatedAt = Date.now(); if (t.reminderMinutesBefore != null) ensureNotifyPermission(); save(t); });
+  const remindSel = selectControl(
+    [["", "无提醒"], ["0", "准时"], ["5", "提前 5 分钟"], ["15", "提前 15 分钟"], ["30", "提前 30 分钟"], ["60", "提前 1 小时"], ["1440", "提前 1 天"]].map(([v, l]) => ({ value: v, label: l })),
+    String(t.reminderMinutesBefore ?? ""),
+    (v) => { t.reminderMinutesBefore = v === "" ? null : Number(v); t.reminded = false; t.updatedAt = Date.now(); if (t.reminderMinutesBefore != null) ensureNotifyPermission(); save(t); },
+  );
 
-  const sel = el("select", { class: "select" }) as HTMLSelectElement;
-  for (const p of snap.projects) {
-    const op = el("option", { value: p.id }, p.name) as HTMLOptionElement;
-    if (p.id === t.projectId) op.selected = true;
-    sel.append(op);
-  }
-  sel.addEventListener("change", () => { t.projectId = sel.value; t.updatedAt = Date.now(); save(t); });
+  const sel = selectControl(
+    snap.projects.map((p) => ({ value: p.id, label: p.name })),
+    t.projectId,
+    (v) => { t.projectId = v; t.updatedAt = Date.now(); save(t); },
+  );
 
   const tagWrap = el("div", { class: "tag-pick" });
   for (const tag of snap.tags) {
@@ -647,7 +879,7 @@ function detailContent(t: Task, id: string): HTMLElement {
 
   const subWrap = el("div", {});
   t.subtasks.forEach((s) => {
-    const mini = el("span", { class: "mini" + (s.completed ? " done" : "") });
+    const mini = el("button", { class: "mini" + (s.completed ? " done" : ""), type: "button", title: s.completed ? "标记子任务为未完成" : "完成子任务", "aria-pressed": String(s.completed) });
     mini.addEventListener("click", () => { s.completed = !s.completed; save(t); openDetail(id); });
     const inp = el("input", { value: s.title, placeholder: "子任务" }) as HTMLInputElement;
     inp.addEventListener("input", () => { s.title = inp.value; queueSave(t); });
@@ -657,15 +889,16 @@ function detailContent(t: Task, id: string): HTMLElement {
   });
   const addSub = el("button", { class: "sub-add", onClick: () => { t.subtasks.push({ id: uid(), title: "", completed: false }); save(t); openDetail(id); } }, el("span", {}, "＋"), el("span", {}, "添加子任务"));
 
-  const pinBtn = el("button", { class: "text-btn", onClick: () => { t.pinned = !t.pinned; t.updatedAt = Date.now(); save(t); openDetail(id); } }, t.pinned ? "📌 已置顶" : "📍 置顶");
-  const delBtn = el("button", { class: "text-btn danger", onClick: () => removeTask(t.id) }, "🗑 删除任务");
+  const pinBtn = el("button", { class: "text-btn", onClick: () => { t.pinned = !t.pinned; t.updatedAt = Date.now(); save(t); openDetail(id); } }, t.pinned ? "已置顶" : "置顶");
+  const delBtn = el("button", { class: "text-btn danger", onClick: () => removeTask(t.id) }, "删除任务");
 
   wrap.append(
     title,
     field("优先级", prioSeg),
+    field("四象限", quadRow),
     field("日期与时间", el("div", { class: "dt-row" }, date, time)),
-    field("提醒", remindSel),
-    field("清单", sel),
+    field("提醒", remindSel.el),
+    field("清单", sel.el),
     snap.tags.length ? field("标签", tagWrap) : el("div"),
     field("子任务", el("div", {}, subWrap, addSub)),
     field("备注", note),
@@ -690,7 +923,7 @@ function openDetail(id: string): void {
 }
 
 function field(label: string, control: Node): HTMLElement {
-  return el("div", { class: "field" }, el("div", { class: "flabel" }, label), control);
+  return labelControl(label, control);
 }
 
 function closeDetail(rerender = true): void {
@@ -729,14 +962,20 @@ async function toggleDone(t: Task): Promise<void> {
 async function addTask(title: string): Promise<void> {
   const raw = title.trim(); if (!raw) return;
   const parsed = parseTask(raw);
-  const projectId = view.startsWith("project:") ? view.slice(8) : INBOX_ID;
+  const filter = view.startsWith("filter:") ? snap.filters.find((f) => f.id === view.slice(7)) : undefined;
+  const rule = filter?.rule;
+  const projectId = view.startsWith("project:") ? view.slice(8) : rule?.projectIds.length === 1 ? rule.projectIds[0] : INBOX_ID;
   let dueDate = parsed.dueDate;
-  if (dueDate == null && (view === "smart:today" || view === "smart:next7")) dueDate = fromDateInput(toDateInput(Date.now()));
-  const tags = view.startsWith("tag:") ? [view.slice(4)] : [];
-  const t: Task = { id: uid(), projectId, title: parsed.title, note: "", priority: 0, completed: false, completedAt: null, dueDate, hasTime: parsed.hasTime, reminderMinutesBefore: parsed.reminderMinutesBefore, reminded: false, pinned: false, tags, subtasks: [], createdAt: Date.now(), updatedAt: Date.now() };
+  if (dueDate == null && (view === "smart:today" || view === "smart:next7" || rule?.due === "today" || rule?.due === "next7")) dueDate = fromDateInput(toDateInput(Date.now()));
+  if (dueDate == null && rule?.due === "overdue") dueDate = fromDateInput(toDateInput(Date.now() - DAY));
+  const tags = view.startsWith("tag:") ? [view.slice(4)] : rule?.tagIds.length ? [...rule.tagIds] : [];
+  const priority = rule?.priorities.length === 1 ? rule.priorities[0] : 0;
+  const t: Task = { id: uid(), projectId, title: parsed.title, note: "", priority, completed: false, completedAt: null, dueDate, hasTime: parsed.hasTime, reminderMinutesBefore: parsed.reminderMinutesBefore, reminded: false, pinned: false, tags, subtasks: [], createdAt: Date.now(), updatedAt: Date.now() };
+  const visibleInCurrentView = matchView(t, view);
   snap.tasks.push(t); await db.saveTask(t);
   if (t.reminderMinutesBefore != null) ensureNotifyPermission();
   render();
+  if (!visibleInCurrentView) toast(`已创建「${t.title || "无标题"}」，但它不符合当前筛选条件`);
 }
 async function removeTask(id: string): Promise<void> {
   const t = snap.tasks.find((x) => x.id === id);
@@ -757,6 +996,44 @@ async function addProject(): Promise<void> {
   const p = { id: uid(), name: name.trim(), color, sortOrder: snap.projects.length, createdAt: Date.now() };
   snap.projects.push(p); await db.saveProject(p); view = "project:" + p.id; render();
 }
+function tagNameExists(name: string, exceptId?: string): boolean {
+  const key = name.trim().toLocaleLowerCase();
+  return snap.tags.some((t) => t.id !== exceptId && t.name.trim().toLocaleLowerCase() === key);
+}
+async function addTag(): Promise<void> {
+  const name = await promptModal("新建标签", "标签名称");
+  if (!name || !name.trim()) return;
+  if (tagNameExists(name)) { toast("已存在同名标签"); return; }
+  const tag = { id: uid(), name: name.trim(), color: PROJECT_COLORS[snap.tags.length % PROJECT_COLORS.length] };
+  snap.tags.push(tag);
+  await db.saveTag(tag);
+  view = "tag:" + tag.id;
+  setCollapsed("tags", false);
+  render();
+}
+async function renameTag(id: string): Promise<void> {
+  const tag = snap.tags.find((t) => t.id === id);
+  if (!tag) return;
+  const name = await promptModal("重命名标签", "标签名称", tag.name);
+  if (!name || !name.trim() || name.trim() === tag.name) return;
+  if (tagNameExists(name, id)) { toast("已存在同名标签"); return; }
+  tag.name = name.trim();
+  await db.saveTag(tag);
+  render();
+}
+async function removeTag(id: string): Promise<void> {
+  const tag = snap.tags.find((t) => t.id === id);
+  if (!tag) return;
+  const count = snap.tasks.filter((t) => t.tags.includes(id)).length;
+  if (!(await confirmModal(`删除标签「${tag.name}」？将从 ${count} 个任务中移除，但不会删除任务。`))) return;
+  snap.tags = snap.tags.filter((t) => t.id !== id);
+  for (const t of snap.tasks) t.tags = t.tags.filter((tagId) => tagId !== id);
+  await db.deleteTag(id);
+  if (view === "tag:" + id) view = "smart:all";
+  render();
+  toast(`已删除标签「${tag.name}」`);
+}
+
 async function removeProject(id: string): Promise<void> {
   const p = snap.projects.find((x) => x.id === id); if (!p) return;
   const doomed = snap.tasks.filter((t) => t.projectId === id);
@@ -784,17 +1061,78 @@ async function removeProject(id: string): Promise<void> {
 }
 
 /* ============ 弹窗 ============ */
-function modal(titleText: string, bodyNode: Node, footNodes: Node[], onClose?: () => void): { close: () => void } {
-  const box = el("div", { class: "modal" },
-    el("div", { class: "modal-head" }, el("div", { class: "modal-title" }, titleText), el("button", { class: "icon-btn", onClick: () => close() }, "✕")),
+interface ModalEntry { overlay: HTMLElement; box: HTMLElement; close: () => void }
+const modalStack: ModalEntry[] = [];
+const FOCUSABLE = "button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex='-1'])";
+let modalSeq = 0;
+
+function modal(titleText: string, bodyNode: Node, footNodes: Node[], onClose?: () => void, returnFocus?: HTMLElement | null): { close: () => void } {
+  const previousFocus = returnFocus ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
+  const previousTaskId = previousFocus?.dataset.id;
+  const previousTitle = previousFocus?.getAttribute("title");
+  const titleId = `modal-title-${++modalSeq}`;
+  const title = el("div", { class: "modal-title", id: titleId }, titleText);
+  const closeBtn = el("button", { class: "icon-btn", type: "button", title: "关闭", "aria-label": "关闭弹窗", onClick: () => close() }, "✕");
+  const box = el("div", { class: "modal", role: "dialog", "aria-modal": "true", "aria-labelledby": titleId, tabIndex: "-1" },
+    el("div", { class: "modal-head" }, title, closeBtn),
     el("div", { class: "modal-body" }, bodyNode),
     el("div", { class: "modal-foot" }, ...footNodes));
   const ov = el("div", { class: "modal-overlay", onClick: (e: Event) => { if (e.target === ov) close(); } }, box);
   let closed = false;
-  function close() { if (closed) return; closed = true; ov.remove(); onClose?.(); }
+  const entry: ModalEntry = { overlay: ov, box, close };
+  function close(): void {
+    if (closed) return;
+    closed = true;
+    closeOpenSelect?.();
+    const i = modalStack.indexOf(entry);
+    if (i >= 0) modalStack.splice(i, 1);
+    ov.remove();
+    onClose?.();
+    if (previousFocus?.isConnected) previousFocus.focus();
+    else if (previousTaskId) document.querySelector<HTMLElement>(`[data-id="${CSS.escape(previousTaskId)}"]`)?.focus();
+    else if (previousTitle) document.querySelector<HTMLElement>(`button[title="${CSS.escape(previousTitle)}"]`)?.focus();
+    else modalStack[modalStack.length - 1]?.box.focus();
+  }
   document.body.append(ov);
+  modalStack.push(entry);
+  setTimeout(() => {
+    const target = box.querySelector<HTMLElement>("input:not([type='file']):not([disabled]), textarea:not([disabled]), .btn-primary:not([disabled]), button:not([disabled])");
+    (target ?? box).focus();
+  }, 0);
   return { close };
 }
+
+function visibleFocusable(box: HTMLElement): HTMLElement[] {
+  return Array.from(box.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((n) => n.offsetParent !== null);
+}
+
+document.addEventListener("focusin", (e) => {
+  const top = modalStack[modalStack.length - 1];
+  if (!top || top.box.contains(e.target as Node)) return;
+  (visibleFocusable(top.box)[0] ?? top.box).focus();
+}, true);
+
+document.addEventListener("keydown", (e) => {
+  const top = modalStack[modalStack.length - 1];
+  if (!top) return;
+  if (e.key === "Escape") {
+    if (top.box.querySelector(".select-wrap.open")) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    top.close();
+    return;
+  }
+  if (e.key !== "Tab") return;
+  const items = visibleFocusable(top.box);
+  if (!items.length) { e.preventDefault(); top.box.focus(); return; }
+  const first = items[0], last = items[items.length - 1];
+  const index = items.indexOf(document.activeElement as HTMLElement);
+  const trapped = e.shiftKey ? index <= 0 : index < 0 || index === items.length - 1;
+  if (trapped) {
+    e.preventDefault(); e.stopPropagation();
+    (e.shiftKey ? last : first).focus();
+  }
+}, true);
 
 // prompt()/confirm() 在嵌入式 WebView 里不受支持,统一用自绘弹窗代替。
 function promptModal(title: string, placeholder = "", value = ""): Promise<string | null> {
@@ -802,7 +1140,10 @@ function promptModal(title: string, placeholder = "", value = ""): Promise<strin
     let settled = false;
     const done = (v: string | null) => { if (settled) return; settled = true; m.close(); resolve(v); };
     const inp = el("input", { class: "date-input", placeholder, value }) as HTMLInputElement;
-    inp.addEventListener("keydown", (e) => { if ((e as KeyboardEvent).key === "Enter") done(inp.value); });
+    inp.addEventListener("keydown", (e) => {
+      const k = e as KeyboardEvent;
+      if (k.key === "Enter" && !k.isComposing) { e.preventDefault(); done(inp.value); }
+    });
     const cancel = el("button", { class: "btn-ghost", onClick: () => done(null) }, "取消");
     const ok = el("button", { class: "btn-primary", onClick: () => done(inp.value) }, "确定");
     const m = modal(title, el("div", { class: "form" }, inp), [cancel, ok], () => done(null));
@@ -818,12 +1159,29 @@ function confirmModal(message: string): Promise<boolean> {
     const m = modal("确认", el("div", { class: "confirm-msg" }, message), [cancel, ok], () => done(false));
   });
 }
-function field2(label: string, control: Node): HTMLElement {
+function labelControl(label: string, control: Node): HTMLElement {
+  if (control instanceof HTMLElement) {
+    const target = control.matches("input, textarea, .select") ? control : control.querySelector<HTMLElement>("input, textarea, .select");
+    target?.setAttribute("aria-label", label);
+  }
   return el("div", { class: "field" }, el("div", { class: "flabel" }, label), control);
+}
+function field2(label: string, control: Node): HTMLElement {
+  return labelControl(label, control);
 }
 function toggleChip(label: string, on: boolean, cb: (v: boolean) => void): HTMLElement {
   let state = on;
-  const b = el("button", { class: "chk" + (state ? " on" : ""), onClick: () => { state = !state; b.classList.toggle("on", state); cb(state); } }, label);
+  const b = el("button", {
+    class: "chk" + (state ? " on" : ""),
+    type: "button",
+    "aria-pressed": String(state),
+    onClick: () => {
+      state = !state;
+      b.classList.toggle("on", state);
+      b.setAttribute("aria-pressed", String(state));
+      cb(state);
+    },
+  }, label);
   return b;
 }
 
@@ -851,20 +1209,18 @@ function openFilterEditor(existing?: Filter): void {
   const projRow = el("div", { class: "chk-row" });
   for (const p of snap.projects) projRow.append(toggleChip(p.name, projSet.has(p.id), (v) => { v ? projSet.add(p.id) : projSet.delete(p.id); }));
 
-  const dueSel = el("select", { class: "select" }) as HTMLSelectElement;
-  ([["any", "不限"], ["overdue", "已逾期"], ["today", "今天及以前"], ["next7", "未来 7 天"], ["nodate", "无日期"]] as [DueFilter, string][]).forEach(([v, l]) => {
-    const o = el("option", { value: v }, l) as HTMLOptionElement;
-    if (existing && existing.rule.due === v) o.selected = true;
-    dueSel.append(o);
-  });
+  const dueSel = selectControl(
+    [["any", "不限"], ["overdue", "已逾期"], ["today", "今天及以前"], ["next7", "未来 7 天"], ["nodate", "无日期"]].map(([v, l]) => ({ value: v, label: l })),
+    existing ? existing.rule.due : "any",
+  );
 
   const body = el("div", { class: "form" },
     field2("名称", nameInp), field2("颜色", colorRow), field2("优先级(满足其一)", prioRow),
     snap.tags.length ? field2("标签(含其一)", tagRow) : el("div"),
-    field2("清单(属其一)", projRow), field2("日期", dueSel));
+    field2("清单(属其一)", projRow), field2("日期", dueSel.el));
 
   const saveBtn = el("button", { class: "btn-primary", onClick: async () => {
-    const f: Filter = { id: existing ? existing.id : uid(), name: nameInp.value.trim() || "未命名筛选器", color, rule: { projectIds: [...projSet], tagIds: [...tagSet], priorities: [...prios], due: dueSel.value as DueFilter } };
+    const f: Filter = { id: existing ? existing.id : uid(), name: nameInp.value.trim() || "未命名筛选器", color, rule: { projectIds: [...projSet], tagIds: [...tagSet], priorities: [...prios], due: dueSel.getValue() as DueFilter } };
     await db.saveFilter(f);
     const i = snap.filters.findIndex((x) => x.id === f.id);
     if (i >= 0) snap.filters[i] = f; else snap.filters.push(f);
@@ -931,12 +1287,14 @@ async function importCsvText(text: string): Promise<{ tasks: number; projects: n
   return { tasks: res.tasks.length, projects: newProjects, tags: newTags, warnings };
 }
 
-function openDataModal(): void {
+function openDataModal(ev?: Event): void {
+  const trigger = ev?.currentTarget instanceof HTMLElement ? ev.currentTarget : null;
   const exportBtn = el("button", { class: "btn-primary", onClick: () => download("locado-backup.json", JSON.stringify(snap, null, 2)) }, "导出为 JSON 备份");
 
   const jsonInp = el("input", { type: "file", accept: ".json", class: "file" }) as HTMLInputElement;
   jsonInp.addEventListener("change", async () => {
     const f = jsonInp.files?.[0]; if (!f) return;
+    jsonInp.value = "";
     try {
       const data: unknown = JSON.parse(await f.text());
       const rec = (data !== null && typeof data === "object" ? data : null) as Record<string, unknown> | null;
@@ -955,6 +1313,7 @@ function openDataModal(): void {
   const csvInp = el("input", { type: "file", accept: ".csv", class: "file" }) as HTMLInputElement;
   csvInp.addEventListener("change", async () => {
     const f = csvInp.files?.[0]; if (!f) return;
+    csvInp.value = "";
     try {
       const r = await importCsvText(await f.text());
       m.close(); render();
@@ -968,14 +1327,14 @@ function openDataModal(): void {
     field2("导入 Locado 备份(.json)", jsonInp),
     field2("从滴答清单导入(.csv)", csvInp),
     el("div", { class: "hint" }, "滴答导出方法:滴答清单 → 设置 → 备份与导出 → 导出,得到 CSV 后在此选择。导入为追加,不会覆盖现有任务。"));
-  const m = modal("数据导入 / 导出", body, []);
+  const m = modal("数据导入 / 导出", body, [], undefined, trigger);
 }
 
 /* ============ 主题 ============ */
 function applyTheme(dark: boolean): void {
   document.documentElement.dataset.theme = dark ? "dark" : "light";
   try { localStorage.setItem("locado.theme", dark ? "dark" : "light"); } catch { /* ignore */ }
-  $("#theme-btn").textContent = dark ? "☀️" : "🌙";
+  $("#theme-btn").replaceChildren(icon(dark ? "sun" : "moon"));
 }
 
 /* ============ 装配 ============ */
@@ -991,7 +1350,7 @@ function buildShell(): void {
           el("h1", { id: "view-title" }, "今天"),
           el("span", { class: "sub", id: "view-sub" }),
           el("span", { class: "spacer" }),
-          el("button", { class: "icon-btn", id: "theme-btn", title: "深浅色", onClick: () => applyTheme(document.documentElement.dataset.theme !== "dark") }, "🌙"),
+          el("button", { class: "icon-btn", id: "theme-btn", title: "深浅色", onClick: () => applyTheme(document.documentElement.dataset.theme !== "dark") }, icon("moon")),
         ),
         el("div", { class: "add-row", id: "add-row" }, elAddInput()),
         el("div", { class: "list", id: "list" }),
@@ -1002,7 +1361,10 @@ function buildShell(): void {
 
 function elAddInput(): HTMLElement {
   const input = el("input", { class: "add-input", placeholder: "＋ 添加任务,如「明天9点开会 提前30分钟提醒」" }) as HTMLInputElement;
-  input.addEventListener("keydown", (e) => { if ((e as KeyboardEvent).key === "Enter") { addTask(input.value); input.value = ""; } });
+  input.addEventListener("keydown", (e) => {
+    const k = e as KeyboardEvent;
+    if (k.key === "Enter" && !k.isComposing) { e.preventDefault(); void addTask(input.value); input.value = ""; }
+  });
   return input;
 }
 
@@ -1014,7 +1376,6 @@ async function boot(): Promise<void> {
   try { applyTheme(localStorage.getItem("locado.theme") === "dark"); } catch { /* ignore */ }
   render();
   window.setInterval(tick, 1000);
-  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDetail(); });
   window.addEventListener("beforeunload", flushSaves);
 
   // 另一个标签页改了数据时,先读对方最新快照,再把自己的未落盘修改合并进去,

@@ -15,7 +15,7 @@ import type {
   Tag,
   Task,
 } from "./types";
-import { defaultSnapshot, INBOX_ID } from "./seed";
+import { defaultSnapshot, INBOX_ID } from "./seed.ts";
 
 export interface Database {
   load(): Promise<Snapshot>;
@@ -208,6 +208,8 @@ export function normalizeSnapshot(raw: unknown): NormalizeResult {
       title: asString(x.title),
       note: asString(x.note),
       priority: asPriority(x.priority),
+      important: typeof x.important === "boolean" ? x.important : undefined,
+      urgent: typeof x.urgent === "boolean" ? x.urgent : undefined,
       completed,
       completedAt: completed ? (asTime(x.completedAt) ?? Date.now()) : null,
       dueDate: asTime(x.dueDate),
