@@ -7,6 +7,7 @@ Notable changes to Locado are documented here. The format is based on [Keep a Ch
 ### Added
 
 - Public-repository documentation, application screenshot, issue forms, and pull request checklist.
+- Full Chinese README and a cross-platform native distribution plan.
 - GitHub Actions for automated tests and production builds.
 - MIT license, repository metadata, and structured development scripts.
 

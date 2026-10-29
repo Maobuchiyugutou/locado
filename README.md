@@ -1,5 +1,7 @@
 # Locado
 
+**English | [简体中文](README.zh-CN.md)**
+
 A local-first task manager with projects, tags, an Eisenhower matrix, habit tracking, focus sessions, and an installable offline PWA.
 
 Built with Vite and TypeScript, without a UI framework. Your data stays in your browser and can be exported at any time.
@@ -57,7 +59,7 @@ Locado currently stores its snapshot in browser `localStorage`. No task data is 
 - Browser site data is isolated by origin. Keep using `http://localhost:1420` rather than switching between `localhost`, `127.0.0.1`, or different ports.
 - Clearing site data or switching browsers can remove or hide your local snapshot. Export before doing either.
 
-See the [中文使用与 WSL 指南](docs/zh-CN.md) for the one-click Windows/WSL workflow.
+See the [完整中文 README](README.zh-CN.md), [Windows + WSL guide](docs/zh-CN.md), and [cross-platform distribution plan](docs/distribution-plan.md).
 
 ## Project structure
 
@@ -72,6 +74,7 @@ docs/                Guides and application screenshots
 
 ## Roadmap
 
+- [Cross-platform Tauri installers and release pipeline](docs/distribution-plan.md)
 - Tauri + SQLite storage adapter
 - Mobile navigation and narrow-screen layouts
 - Repeatable browser end-to-end tests

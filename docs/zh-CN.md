@@ -1,5 +1,7 @@
 # Locado 中文使用与 WSL 指南
 
+[返回完整中文 README](../README.zh-CN.md)
+
 Locado 是一个本地优先的待办、习惯打卡与专注工具。当前版本在浏览器中运行，数据保存在浏览器 `localStorage`，无需账号或后端服务。
 
 ## 功能
