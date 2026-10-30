@@ -28,9 +28,34 @@ test("旧快照补默认值并保留显式四象限字段", () => {
   assert.deepEqual(legacy.tags, ["urgent"]);
   assert.equal(legacy.completed, false);
   assert.equal(legacy.completedAt, null);
+  assert.equal(legacy.recurrence, undefined);
   assert.equal(classified.important, true);
   assert.equal(classified.urgent, false);
   assert.ok(warnings.some((w) => w.includes("标签引用失效")));
+});
+
+test("快照规整保留有效重复字段并丢弃非法规则", () => {
+  const { snap } = normalizeSnapshot({
+    projects: [{ id: "inbox", name: "收集箱" }],
+    tasks: [
+      {
+        id: "repeat", projectId: "inbox", title: "重复",
+        recurrence: { kind: "weekly", weekdays: [5, 1, 5, 9] },
+        recurrenceSourceId: "previous", recurrenceNextId: "next",
+      },
+      {
+        id: "invalid", projectId: "inbox", title: "非法",
+        recurrence: { kind: "monthly", day: 32 }, recurrenceNextId: "orphan",
+      },
+    ],
+  });
+  const repeat = snap.tasks.find((task) => task.id === "repeat");
+  const invalid = snap.tasks.find((task) => task.id === "invalid");
+  assert.deepEqual(repeat.recurrence, { kind: "weekly", weekdays: [1, 5] });
+  assert.equal(repeat.recurrenceSourceId, "previous");
+  assert.equal(repeat.recurrenceNextId, "next");
+  assert.equal(invalid.recurrence, undefined);
+  assert.equal(invalid.recurrenceNextId, undefined);
 });
 
 test("异常快照输入不会导致白屏", () => {
@@ -56,6 +81,16 @@ test("本地存储写入、标签删除、番茄幂等和损坏备份", async ()
   let disk = JSON.parse(storage.getItem(SNAPSHOT_KEY));
   assert.equal(disk.tasks.find((t) => t.id === task.id).important, true);
   assert.equal(disk.tasks.find((t) => t.id === task.id).urgent, false);
+
+  const batchTask = { ...task, id: "batch-task", title: "批量新增" };
+  await db.saveTasks([{ ...task, title: "批量更新" }, batchTask]);
+  disk = JSON.parse(storage.getItem(SNAPSHOT_KEY));
+  assert.equal(disk.tasks.find((t) => t.id === task.id).title, "批量更新");
+  assert.equal(disk.tasks.find((t) => t.id === "batch-task").title, "批量新增");
+  await db.saveTasks([], ["batch-task"]);
+  disk = JSON.parse(storage.getItem(SNAPSHOT_KEY));
+  assert.equal(disk.tasks.some((t) => t.id === "batch-task"), false);
+  assert.equal(disk.tasks.some((t) => t.id === task.id), true);
 
   const tagId = snap.tags[0].id;
   await db.deleteTag(tagId);

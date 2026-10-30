@@ -161,3 +161,85 @@ test("Quick Add 日期和时间纠错保持其余结果一致", () => {
     assert.equal(noDateTime.title, "开会 明天 9点");
   });
 });
+
+test("Quick Add 识别每天及每周重复并计算首次日期", () => {
+  withNow(new Date("2026-10-29T08:00:00"), () => {
+    const daily = parseTask("每天9点 背单词 提前10分钟提醒");
+    assert.deepEqual(daily.recurrence, { kind: "daily" });
+    assert.equal(dateKey(daily.dueDate), "2026-10-29");
+    assert.equal(daily.title, "背单词");
+    assert.equal(daily.reminderMinutesBefore, 10);
+
+    const weekly = parseTask("每周五18点 提交周报");
+    assert.deepEqual(weekly.recurrence, { kind: "weekly", weekdays: [5] });
+    assert.equal(dateKey(weekly.dueDate), "2026-10-30");
+    assert.equal(new Date(weekly.dueDate).getHours(), 18);
+    assert.equal(weekly.title, "提交周报");
+    assert.equal(weekly.parts.some((part) => part.kind === "date"), false);
+
+    assert.deepEqual(parseTask("每周一、三、五 健身").recurrence, { kind: "weekly", weekdays: [1, 3, 5] });
+    assert.deepEqual(parseTask("每周一、周五 健身").recurrence, { kind: "weekly", weekdays: [1, 5] });
+  });
+});
+
+test("Quick Add 识别每月、每年和完成后重复", () => {
+  withNow(new Date("2026-10-29T08:00:00"), () => {
+    const monthly = parseTask("每月5日 还款");
+    assert.deepEqual(monthly.recurrence, { kind: "monthly", day: 5 });
+    assert.equal(dateKey(monthly.dueDate), "2026-11-05");
+    assert.equal(monthly.parts.find((part) => part.kind === "recurrence").fallbackDate.text, "5日");
+
+    assert.equal(dateKey(parseTask("每月最后一天 总结").dueDate), "2026-10-31");
+    assert.equal(dateKey(parseTask("月末 总结").dueDate), "2026-10-31");
+    const yearly = parseTask("每年3月5日 纪念");
+    assert.deepEqual(yearly.recurrence, { kind: "yearly", month: 3, day: 5 });
+    assert.equal(dateKey(yearly.dueDate), "2027-03-05");
+    const after = parseTask("完成后3天 浇水");
+    assert.deepEqual(after.recurrence, { kind: "afterCompletion", days: 3 });
+    assert.equal(dateKey(after.dueDate), "2026-10-29");
+  });
+});
+
+test("Quick Add 重复语法拒绝歧义并优先显式日期", () => {
+  withNow(new Date("2026-10-29T08:00:00"), () => {
+    const multiple = parseTask("每天 每周五 学习");
+    assert.equal(multiple.recurrence, null);
+    assert.equal(multiple.dueDate, null);
+    assert.equal(multiple.title, "每天 每周五 学习");
+
+    const ambiguous = parseTask("每周一日用品");
+    assert.equal(ambiguous.recurrence, null);
+    assert.equal(ambiguous.dueDate, null);
+    assert.equal(ambiguous.title, "每周一日用品");
+
+    const explicit = parseTask("下周一 每周五 开会");
+    assert.deepEqual(explicit.recurrence, { kind: "weekly", weekdays: [5] });
+    assert.equal(dateKey(explicit.dueDate), "2026-11-02");
+    assert.equal(explicit.title, "开会");
+  });
+});
+
+test("Quick Add 取消重复可恢复单次日期或清除推导日期", () => {
+  withNow(new Date("2026-10-29T08:00:00"), () => {
+    const weekly = parseTask("每周五18点 提交周报 提前30分钟提醒");
+    const single = applyQuickAddCorrections(weekly, new Set(["recurrence"]));
+    assert.equal(single.recurrence, null);
+    assert.equal(dateKey(single.dueDate), "2026-10-30");
+    assert.equal(new Date(single.dueDate).getHours(), 18);
+    assert.equal(single.reminderMinutesBefore, 30);
+    assert.equal(single.title, "提交周报 周五");
+    assert.equal(single.parts.some((part) => part.kind === "date"), true);
+
+    const daily = applyQuickAddCorrections(parseTask("每天 背单词"), new Set(["recurrence"]));
+    assert.equal(daily.recurrence, null);
+    assert.equal(daily.dueDate, null);
+    assert.equal(daily.title, "背单词 每天");
+
+    const explicit = parseTask("下周一 每周五18点 提交周报");
+    const noExplicitDate = applyQuickAddCorrections(explicit, new Set(["date"]));
+    assert.deepEqual(noExplicitDate.recurrence, { kind: "weekly", weekdays: [5] });
+    assert.equal(dateKey(noExplicitDate.dueDate), "2026-10-30");
+    assert.equal(new Date(noExplicitDate.dueDate).getHours(), 18);
+    assert.equal(noExplicitDate.title, "提交周报 下周一");
+  });
+});

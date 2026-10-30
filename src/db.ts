@@ -16,6 +16,7 @@ import type {
   Task,
 } from "./types";
 import { defaultSnapshot, INBOX_ID } from "./seed.ts";
+import { normalizeRecurrence } from "./recurrence.ts";
 
 export interface Database {
   load(): Promise<Snapshot>;
@@ -31,6 +32,7 @@ export interface Database {
   deleteHabit(id: string): Promise<void>;
   saveFocusRecord(r: FocusRecord): Promise<void>;
   saveTask(t: Task): Promise<void>;
+  saveTasks(upserts: Task[], deleteIds?: string[]): Promise<void>;
   deleteTask(id: string): Promise<void>;
 }
 
@@ -202,6 +204,7 @@ export function normalizeSnapshot(raw: unknown): NormalizeResult {
     const completed = asBool(x.completed);
     const createdAt = asNumber(x.createdAt, Date.now());
     const remind = x.reminderMinutesBefore;
+    const recurrence = normalizeRecurrence(x.recurrence) ?? undefined;
     tasks.push({
       id,
       projectId,
@@ -221,6 +224,9 @@ export function normalizeSnapshot(raw: unknown): NormalizeResult {
       subtasks,
       createdAt,
       updatedAt: asNumber(x.updatedAt, createdAt),
+      recurrence,
+      recurrenceSourceId: asString(x.recurrenceSourceId).trim() || undefined,
+      recurrenceNextId: recurrence ? asString(x.recurrenceNextId).trim() || undefined : undefined,
     });
   }
   if (orphanProjects) warnings.push(`${orphanProjects} 个任务的原清单不存在,已移入收集箱`);
@@ -343,10 +349,15 @@ class LocalStore implements Database {
     this.write(s);
   }
 
-  async saveTask(t: Task): Promise<void> {
+  async saveTask(t: Task): Promise<void> { return this.saveTasks([t]); }
+  async saveTasks(upserts: Task[], deleteIds: string[] = []): Promise<void> {
     const s = this.data();
-    const i = s.tasks.findIndex((x) => x.id === t.id);
-    if (i >= 0) s.tasks[i] = t; else s.tasks.push(t);
+    const deleted = new Set(deleteIds);
+    if (deleted.size) s.tasks = s.tasks.filter((task) => !deleted.has(task.id));
+    for (const task of upserts) {
+      const i = s.tasks.findIndex((x) => x.id === task.id);
+      if (i >= 0) s.tasks[i] = task; else s.tasks.push(task);
+    }
     this.write(s);
   }
   async deleteTask(id: string): Promise<void> {

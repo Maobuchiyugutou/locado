@@ -245,6 +245,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 }
 .quick-add-chip:hover { background: var(--card-hover); border-color: var(--border-strong); color: var(--text); }
 .quick-add-chip-x { color: var(--text-faint); font-size: 14px; line-height: 1; }
+.recurrence-editor { display: grid; gap: 8px; }
+.recurrence-preview { color: var(--text-faint); font-size: 11px; line-height: 1.6; }
 
 .list { flex: 1; overflow-y: auto; padding: 0 18px 36px; }
 .list-inner { max-width: 780px; margin: 0 auto; }

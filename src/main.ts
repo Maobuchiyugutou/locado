@@ -12,6 +12,7 @@ import { INBOX_ID } from "./seed";
 import { importFromTickTickCsv } from "./importers";
 import { applyQuickAddCorrections, parseTask, resolveQuickAddMetadata, type ParsedTask } from "./nlp";
 import { setupPWA } from "./pwa";
+import { nextRecurringDue, normalizeRecurrence, planRecurringToggle, recurrenceSummary } from "./recurrence";
 import {
   HABIT_ICONS,
   PROJECT_COLORS,
@@ -20,6 +21,7 @@ import {
   type FocusRecord,
   type Habit,
   type Priority,
+  type RecurrenceRule,
   type Snapshot,
   type Task,
 } from "./types";
@@ -424,6 +426,7 @@ function taskRow(t: Task): HTMLElement {
   const check = el("button", { class: `check p${t.priority}` + (t.completed ? " done" : ""), title: "完成", onClick: (e: Event) => { e.stopPropagation(); toggleDone(t); } });
   const meta = el("div", { class: "task-meta" });
   if (t.dueDate != null) meta.append(el("span", { class: "chip due" + (!t.completed && isOverdue(t.dueDate) ? " overdue" : "") }, icon("calendar", "chip-icon"), dueLabel(t.dueDate) + (t.hasTime ? " " + fmtTime(t.dueDate) : "")));
+  if (t.recurrence) meta.append(el("span", { class: "chip", title: recurrenceSummary(t.recurrence) }, icon("sync", "chip-icon"), recurrenceSummary(t.recurrence)));
   if (t.reminderMinutesBefore != null) meta.append(el("span", { class: "chip" }, icon("bell", "chip-icon"), remindLabel(t.reminderMinutesBefore)));
   const doneSubs = t.subtasks.filter((s) => s.completed).length;
   if (t.subtasks.length) meta.append(el("span", { class: "chip" }, icon("check-square", "chip-icon"), `${doneSubs}/${t.subtasks.length}`));
@@ -845,6 +848,94 @@ function renderFocus(list: HTMLElement): void {
 /* ============ 详情抽屉 ============ */
 let detailState: { id: string; bodyEl: HTMLElement; close: () => void } | null = null;
 
+function defaultRecurrence(kind: RecurrenceRule["kind"], dueDate: number | null): RecurrenceRule {
+  const date = new Date(dueDate ?? Date.now());
+  if (kind === "daily") return { kind: "daily" };
+  if (kind === "weekly") return { kind: "weekly", weekdays: [date.getDay()] };
+  if (kind === "monthly") return { kind: "monthly", day: date.getDate() };
+  if (kind === "yearly") return { kind: "yearly", month: date.getMonth() + 1, day: date.getDate() };
+  return { kind: "afterCompletion", days: 3 };
+}
+
+async function updateRecurrence(t: Task, candidate: RecurrenceRule | null, id: string): Promise<void> {
+  const rule = candidate ? normalizeRecurrence(candidate) : null;
+  if (candidate && !rule) { toast("请输入有效的重复规则"); openDetail(id); return; }
+  if (rule && t.dueDate == null) { toast("请先设置日期"); openDetail(id); return; }
+
+  const now = Date.now();
+  const upserts: Task[] = [t];
+  t.recurrence = rule ?? undefined;
+  t.updatedAt = now;
+  if (t.recurrenceNextId) {
+    const next = snap.tasks.find((item) => item.id === t.recurrenceNextId && item.recurrenceSourceId === t.id);
+    t.recurrenceNextId = undefined;
+    if (next) {
+      next.recurrence = undefined;
+      next.recurrenceSourceId = undefined;
+      next.recurrenceNextId = undefined;
+      next.updatedAt = now;
+      upserts.push(next);
+    }
+  }
+  await db.saveTasks(upserts);
+  openDetail(id);
+}
+
+function recurrenceEditor(t: Task, id: string): HTMLElement {
+  if (t.completed) return el("div", { class: "recurrence-preview" }, t.recurrence ? recurrenceSummary(t.recurrence) : "不重复");
+
+  const wrap = el("div", { class: "recurrence-editor" });
+  const kind = t.recurrence?.kind ?? "";
+  const type = selectControl([
+    { value: "", label: "不重复" },
+    { value: "daily", label: "每天" },
+    { value: "weekly", label: "每周" },
+    { value: "monthly", label: "每月" },
+    { value: "yearly", label: "每年" },
+    { value: "afterCompletion", label: "完成后 N 天" },
+  ], kind, (value) => {
+    void updateRecurrence(t, value ? defaultRecurrence(value as RecurrenceRule["kind"], t.dueDate) : null, id);
+  });
+  wrap.append(type.el);
+
+  const rule = t.recurrence;
+  if (rule?.kind === "weekly") {
+    const row = el("div", { class: "chk-row" });
+    ["日", "一", "二", "三", "四", "五", "六"].forEach((label, day) => {
+      row.append(toggleChip(label, rule.weekdays.includes(day), (on) => {
+        const weekdays = new Set(rule.weekdays);
+        if (on) weekdays.add(day); else weekdays.delete(day);
+        if (!weekdays.size) { toast("每周至少选择一天"); openDetail(id); return; }
+        void updateRecurrence(t, { kind: "weekly", weekdays: [...weekdays] }, id);
+      }));
+    });
+    wrap.append(row);
+  } else if (rule?.kind === "monthly") {
+    const options = [{ value: "last", label: "最后一天" }, ...Array.from({ length: 31 }, (_, i) => ({ value: String(i + 1), label: `${i + 1} 日` }))];
+    wrap.append(selectControl(options, String(rule.day), (value) => {
+      void updateRecurrence(t, { kind: "monthly", day: value === "last" ? "last" : Number(value) }, id);
+    }).el);
+  } else if (rule?.kind === "yearly") {
+    const month = el("input", { class: "date-input", type: "number", min: "1", max: "12", value: String(rule.month), "aria-label": "月份" }) as HTMLInputElement;
+    const day = el("input", { class: "date-input", type: "number", min: "1", max: "31", value: String(rule.day), "aria-label": "日期" }) as HTMLInputElement;
+    const commit = () => { void updateRecurrence(t, { kind: "yearly", month: Number(month.value), day: Number(day.value) }, id); };
+    month.addEventListener("change", commit); day.addEventListener("change", commit);
+    wrap.append(el("div", { class: "dt-row" }, month, day));
+  } else if (rule?.kind === "afterCompletion") {
+    const days = el("input", { class: "date-input", type: "number", min: "1", step: "1", value: String(rule.days), "aria-label": "完成后的天数" }) as HTMLInputElement;
+    days.addEventListener("change", () => { void updateRecurrence(t, { kind: "afterCompletion", days: Number(days.value) }, id); });
+    wrap.append(days);
+  }
+
+  if (rule) {
+    const linked = t.recurrenceNextId ? snap.tasks.find((item) => item.id === t.recurrenceNextId) : undefined;
+    const nextDue = linked?.dueDate ?? (t.dueDate != null ? nextRecurringDue(rule, t.dueDate, Date.now()) : null);
+    const text = t.dueDate == null ? "请先设置日期" : nextDue != null ? `若现在完成，下一次：${dueLabel(nextDue)}${rule && t.hasTime ? " " + fmtTime(nextDue) : ""}` : "暂无下一次日期";
+    wrap.append(el("div", { class: "recurrence-preview" }, text));
+  }
+  return wrap;
+}
+
 function detailContent(t: Task, id: string): HTMLElement {
   const wrap = el("div", {});
 
@@ -917,6 +1008,7 @@ function detailContent(t: Task, id: string): HTMLElement {
     field("优先级", prioSeg),
     field("四象限", quadRow),
     field("日期与时间", el("div", { class: "dt-row" }, date, time)),
+    field("重复", recurrenceEditor(t, id)),
     field("提醒", remindSel.el),
     field("清单", sel.el),
     snap.tags.length ? field("标签", tagWrap) : el("div"),
@@ -964,20 +1056,37 @@ function flushSaves(): void {
 }
 
 function queueSave(t: Task): void {
+  t.updatedAt = Date.now();
   pendingSaves.set(t.id, t);
   if (saveTimer != null) clearTimeout(saveTimer);
   saveTimer = window.setTimeout(flushSaves, 300);
 }
 
 async function save(t: Task, rerender = true): Promise<void> {
+  t.updatedAt = Date.now();
   pendingSaves.delete(t.id);
   await db.saveTask(t);
   if (rerender) render(); else renderSidebar();
 }
+const togglingTasks = new Set<string>();
 async function toggleDone(t: Task): Promise<void> {
-  t.completed = !t.completed; t.completedAt = t.completed ? Date.now() : null; t.updatedAt = Date.now();
-  await db.saveTask(t);
-  if (selectedId === t.id && t.completed) closeDetail(); else render();
+  if (togglingTasks.has(t.id)) return;
+  togglingTasks.add(t.id);
+  pendingSaves.delete(t.id);
+  try {
+    const plan = planRecurringToggle(snap.tasks, t.id, Date.now(), uid);
+    await db.saveTasks(plan.upserts, plan.deleteIds);
+    if (plan.deleteIds.length) snap.tasks = snap.tasks.filter((task) => !plan.deleteIds.includes(task.id));
+    for (const task of plan.upserts) {
+      const i = snap.tasks.findIndex((item) => item.id === task.id);
+      if (i >= 0) snap.tasks[i] = task; else snap.tasks.push(task);
+    }
+    if (plan.nextPreserved) toast("下一次任务已保留，原任务已转为普通任务");
+    const current = snap.tasks.find((task) => task.id === t.id);
+    if (selectedId === t.id && current?.completed) closeDetail(); else render();
+  } finally {
+    togglingTasks.delete(t.id);
+  }
 }
 async function addTask(title: string, corrected?: ParsedTask, skipDateDefault = false): Promise<void> {
   const raw = title.trim(); if (!raw) return;
@@ -996,7 +1105,7 @@ async function addTask(title: string, corrected?: ParsedTask, skipDateDefault = 
   const tags = parsed.tagNames.length ? metadata.tagIds : inheritedTags;
   const inheritedPriority = rule?.priorities.length === 1 ? rule.priorities[0] : 0;
   const priority = parsed.prioritySpecified ? parsed.priority : inheritedPriority;
-  const t: Task = { id: uid(), projectId, title: parsed.title, note: "", priority, completed: false, completedAt: null, dueDate, hasTime: parsed.hasTime, reminderMinutesBefore: parsed.reminderMinutesBefore, reminded: false, pinned: false, tags, subtasks: [], createdAt: Date.now(), updatedAt: Date.now() };
+  const t: Task = { id: uid(), projectId, title: parsed.title, note: "", priority, completed: false, completedAt: null, dueDate, hasTime: parsed.hasTime, reminderMinutesBefore: parsed.reminderMinutesBefore, reminded: false, pinned: false, tags, subtasks: [], createdAt: Date.now(), updatedAt: Date.now(), recurrence: parsed.recurrence ?? undefined };
   const visibleInCurrentView = matchView(t, view);
   snap.tasks.push(t); await db.saveTask(t);
   if (t.reminderMinutesBefore != null) ensureNotifyPermission();
@@ -1401,7 +1510,7 @@ function buildShell(): void {
 }
 
 function elAddInput(): HTMLElement {
-  const input = el("input", { class: "add-input", placeholder: "＋ 添加任务,如「明天9点开会 提前30分钟提醒」" }) as HTMLInputElement;
+  const input = el("input", { class: "add-input", placeholder: "＋ 添加任务,如「每周五18点提交周报」" }) as HTMLInputElement;
   const preview = el("div", { class: "quick-add-preview", role: "group", "aria-label": "自然语言识别结果" });
   const ignored = new Set<string>();
   let parsed = parseTask("");
@@ -1436,7 +1545,7 @@ function elAddInput(): HTMLElement {
     if (k.key === "Enter" && !k.isComposing) {
       e.preventDefault();
       const current = corrected();
-      const skipDateDefault = ignored.has("date");
+      const skipDateDefault = ignored.has("date") || ignored.has("recurrence");
       void addTask(input.value, current, skipDateDefault);
       input.value = ""; ignored.clear(); parsed = parseTask(""); renderPreview();
     }

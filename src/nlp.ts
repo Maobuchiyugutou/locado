@@ -1,14 +1,16 @@
 // 中文自然语言快速添加:从一句话里解析出日期、时间、清单、标签、优先级和提醒。
 // 纯规则实现,无第三方依赖。属于"尽力而为":解析结果会填进任务,用户可在详情里再改。
 
-import type { Priority, Project, Tag } from "./types.ts";
+import { firstRecurringDue, normalizeRecurrence } from "./recurrence.ts";
+import type { Priority, Project, RecurrenceRule, Tag } from "./types.ts";
 
-export type QuickAddPartKind = "date" | "time" | "project" | "tag" | "priority" | "reminder";
+export type QuickAddPartKind = "date" | "time" | "recurrence" | "project" | "tag" | "priority" | "reminder";
 export interface QuickAddPart {
   key: string;
   kind: QuickAddPartKind;
   text: string;
   value?: string;
+  fallbackDate?: { text: string; dueDate: number };
 }
 
 export interface ParsedTask {
@@ -20,6 +22,7 @@ export interface ParsedTask {
   tagNames: string[];
   priority: Priority;
   prioritySpecified: boolean;
+  recurrence: RecurrenceRule | null;
   parts: QuickAddPart[];
 }
 
@@ -206,12 +209,64 @@ function detectPriority(text: string): PriorityHit {
   return { value: values[m[1] ?? m[2]], hit: m[0] };
 }
 
+interface RecurrenceHit {
+  rule: RecurrenceRule | null;
+  hit: string | null;
+  fallbackText?: string;
+  multiple: boolean;
+  blocked: string[];
+}
+
+function detectRecurrence(text: string): RecurrenceHit {
+  const hits: { rule: RecurrenceRule; hit: string; fallbackText?: string }[] = [];
+  const blocked: string[] = [];
+  const collect = (pattern: RegExp, build: (m: RegExpMatchArray) => { rule: RecurrenceRule; fallbackText?: string } | null) => {
+    for (const m of text.matchAll(pattern)) {
+      const result = build(m);
+      if (result) hits.push({ rule: result.rule, hit: m[0], fallbackText: result.fallbackText });
+    }
+  };
+
+  collect(new RegExp(`完成后\\s*(${NUM})\\s*天`, "g"), (m) => {
+    const rule = normalizeRecurrence({ kind: "afterCompletion", days: cnToNum(m[1]) });
+    return rule ? { rule } : null;
+  });
+  collect(new RegExp(`每年\\s*(${NUM})\\s*月\\s*(${NUM})\\s*[日号]`, "g"), (m) => {
+    const month = cnToNum(m[1]), day = cnToNum(m[2]);
+    const rule = normalizeRecurrence({ kind: "yearly", month, day });
+    return rule ? { rule, fallbackText: `${m[1]}月${m[2]}${m[0].slice(-1)}` } : null;
+  });
+  collect(/每月(?:最后一天|月末)|(?<!每)月末/g, () => ({ rule: { kind: "monthly", day: "last" } }));
+  collect(new RegExp(`每月\\s*(${NUM})\\s*([日号])`, "g"), (m) => {
+    const day = cnToNum(m[1]);
+    const rule = normalizeRecurrence({ kind: "monthly", day });
+    return rule ? { rule, fallbackText: `${m[1]}${m[2]}` } : null;
+  });
+  collect(/每(?:周|星期|礼拜)\s*([一二三四五六天日](?:(?:\s*[、,，]\s*)(?:周|星期|礼拜)?\s*[一二三四五六天日])*)/g, (m) => {
+    const next = text[(m.index ?? 0) + m[0].length];
+    if (next && /[一二三四五六天日]/.test(next)) { blocked.push(m[0]); return null; }
+    const names: Record<string, number> = { 日: 0, 天: 0, 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6 };
+    const parts = m[1].split(/\s*[、,，]\s*/).map((part) => part.replace(/^(?:周|星期|礼拜)\s*/, ""));
+    const weekdays = parts.map((part) => names[part]).filter((day): day is number => day != null);
+    const rule = normalizeRecurrence({ kind: "weekly", weekdays });
+    return rule ? { rule, fallbackText: weekdays.length === 1 ? `周${parts[0]}` : undefined } : null;
+  });
+  collect(/每天|每日/g, () => ({ rule: { kind: "daily" } }));
+
+  if (hits.length !== 1) return { rule: null, hit: null, multiple: hits.length > 1, blocked };
+  return { ...hits[0], multiple: false, blocked };
+}
+
 export function parseTask(input: string): ParsedTask {
   const text = input.trim();
   const strip: string[] = [];
 
-  const dt = detectDate(text);
+  const recurrence = detectRecurrence(text);
+  let dateText = recurrence.hit ? text.replace(recurrence.hit, "") : text;
+  for (const blocked of recurrence.blocked) dateText = dateText.replace(blocked, "");
+  const dt = recurrence.multiple ? { date: null, hits: [] } : detectDate(dateText);
   if (dt.date) strip.push(...dt.hits);
+  if (recurrence.hit) strip.push(recurrence.hit);
   const tmRaw = detectTime(text);
   const rm = detectReminder(text);
   const project = detectProject(text);
@@ -222,14 +277,15 @@ export function parseTask(input: string): ParsedTask {
   if (priority.hit) strip.push(priority.hit);
 
   // 弱时间(纯中文「X点」无后缀/时段)只有在有日期时才采信,避免「有一点问题」误判
-  const useTime = tmRaw && (tmRaw.strong || !!dt.date);
+  const useTime = tmRaw && (tmRaw.strong || !!dt.date || !!recurrence.rule);
   if (useTime && tmRaw) strip.push(...tmRaw.hits);
   if (rm.min != null) strip.push(...rm.hits);
 
   let dueDate: number | null = null;
   let hasTime = false;
-  if (dt.date || useTime) {
-    const base = dt.date ? new Date(dt.date) : midnight(new Date());
+  if (dt.date || recurrence.rule || useTime) {
+    const firstDue = recurrence.rule ? firstRecurringDue(recurrence.rule, midnight(new Date()).getTime()) : null;
+    const base = dt.date ? new Date(dt.date) : firstDue != null ? new Date(firstDue) : midnight(new Date());
     if (useTime && tmRaw) { base.setHours(tmRaw.h, tmRaw.mi, 0, 0); hasTime = true; }
     else base.setHours(9, 0, 0, 0);
     dueDate = base.getTime();
@@ -254,6 +310,14 @@ export function parseTask(input: string): ParsedTask {
   const parts: QuickAddPart[] = [];
   if (dt.date) parts.push({ key: "date", kind: "date", text: dt.hits.join(" ") });
   if (useTime && tmRaw) parts.push({ key: "time", kind: "time", text: tmRaw.hits.join(" ") });
+  if (recurrence.rule && recurrence.hit) {
+    const part: QuickAddPart = { key: "recurrence", kind: "recurrence", text: recurrence.hit };
+    if (recurrence.fallbackText) {
+      const fallback = detectDate(recurrence.fallbackText);
+      if (fallback.date) part.fallbackDate = { text: fallback.hits.join(" "), dueDate: fallback.date.getTime() };
+    }
+    parts.push(part);
+  }
   if (project.hit && project.name) parts.push({ key: "project", kind: "project", text: project.hit, value: project.name });
   for (const name of tags.names) parts.push({ key: `tag:${name}`, kind: "tag", text: `@${name}`, value: name });
   if (priority.hit) parts.push({ key: "priority", kind: "priority", text: priority.hit });
@@ -268,6 +332,7 @@ export function parseTask(input: string): ParsedTask {
     tagNames: tags.names,
     priority: priority.value,
     prioritySpecified: priority.hit !== null,
+    recurrence: recurrence.rule,
     parts,
   };
 }
@@ -278,28 +343,42 @@ export function applyQuickAddCorrections(parsed: ParsedTask, ignoredKeys: Readon
 
   const next: ParsedTask = {
     ...parsed,
+    recurrence: ignoredKeys.has("recurrence") ? null : parsed.recurrence,
     tagNames: parsed.tagNames.filter((name) => !ignoredKeys.has(`tag:${name}`)),
     parts: parsed.parts.filter((part) => !ignoredKeys.has(part.key)),
   };
+  const recurrencePart = parsed.parts.find((part) => part.kind === "recurrence");
+  const fallback = recurrencePart?.fallbackDate;
+  const restoreFallback = !!fallback && ignoredKeys.has("recurrence") && !ignoredKeys.has("date")
+    && !next.parts.some((part) => part.kind === "date");
+  if (restoreFallback && fallback) {
+    next.parts.unshift({ key: "date", kind: "date", text: fallback.text });
+  }
+
   const hasDate = next.parts.some((part) => part.kind === "date");
   const hasTime = next.parts.some((part) => part.kind === "time");
+  const previous = parsed.dueDate != null ? new Date(parsed.dueDate) : null;
+  const blockTimeOnlyDate = ignoredKeys.has("recurrence") && !fallback && !hasDate;
+  let base: number | null = null;
+  if (hasDate) base = restoreFallback && fallback ? fallback.dueDate : parsed.dueDate;
+  else if (next.recurrence) base = firstRecurringDue(next.recurrence, midnight(new Date()).getTime());
+  else if (hasTime && !blockTimeOnlyDate) base = midnight(new Date()).getTime();
 
-  if (next.dueDate != null) {
-    const previous = new Date(next.dueDate);
-    if (!hasDate && !hasTime) {
-      next.dueDate = null;
-      next.hasTime = false;
-    } else if (!hasDate && hasTime) {
-      const base = midnight(new Date());
-      base.setHours(previous.getHours(), previous.getMinutes(), 0, 0);
-      next.dueDate = base.getTime();
+  if (base != null) {
+    const date = new Date(base);
+    if (hasTime && previous) {
+      date.setHours(previous.getHours(), previous.getMinutes(), 0, 0);
       next.hasTime = true;
-    } else if (hasDate && !hasTime) {
-      previous.setHours(9, 0, 0, 0);
-      next.dueDate = previous.getTime();
+    } else {
+      date.setHours(9, 0, 0, 0);
       next.hasTime = false;
     }
+    next.dueDate = date.getTime();
+  } else {
+    next.dueDate = null;
+    next.hasTime = false;
   }
+
   if (ignoredKeys.has("project")) next.projectName = null;
   if (ignoredKeys.has("priority")) { next.priority = 0; next.prioritySpecified = false; }
   if (ignoredKeys.has("reminder") || next.dueDate == null) next.reminderMinutesBefore = null;
@@ -307,7 +386,8 @@ export function applyQuickAddCorrections(parsed: ParsedTask, ignoredKeys: Readon
 
   const titleParts = [parsed.title];
   for (const part of ignored) {
-    if (part.text && !titleParts.join(" ").includes(part.text)) titleParts.push(part.text);
+    const text = part.kind === "recurrence" && part.fallbackDate ? part.fallbackDate.text : part.text;
+    if (text && !titleParts.join(" ").includes(text)) titleParts.push(text);
   }
   next.title = titleParts.join(" ").replace(/\s{2,}/g, " ").trim();
   return next;

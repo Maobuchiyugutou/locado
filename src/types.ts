@@ -23,6 +23,13 @@ export interface Subtask {
   completed: boolean;
 }
 
+export type RecurrenceRule =
+  | { kind: "daily" }
+  | { kind: "weekly"; weekdays: number[] }
+  | { kind: "monthly"; day: number | "last" }
+  | { kind: "yearly"; month: number; day: number }
+  | { kind: "afterCompletion"; days: number };
+
 export interface Task {
   id: string;
   projectId: string;
@@ -42,6 +49,9 @@ export interface Task {
   subtasks: Subtask[];
   createdAt: number;
   updatedAt: number;
+  recurrence?: RecurrenceRule;
+  recurrenceSourceId?: string;
+  recurrenceNextId?: string;
 }
 
 // 自定义智能清单(筛选器):按条件自动聚合任务。对应滴答会员的"自定义清单/筛选器"。
