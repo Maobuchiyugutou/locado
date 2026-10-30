@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { getDB, normalizeSnapshot, onStorageError, SNAPSHOT_KEY } from "../src/db.ts";
+import { flushAutoBackup, listBackups } from "../src/backups.ts";
 
 class MemoryStorage {
   constructor() { this.data = new Map(); }
@@ -81,6 +82,8 @@ test("本地存储写入、标签删除、番茄幂等和损坏备份", async ()
   let disk = JSON.parse(storage.getItem(SNAPSHOT_KEY));
   assert.equal(disk.tasks.find((t) => t.id === task.id).important, true);
   assert.equal(disk.tasks.find((t) => t.id === task.id).urgent, false);
+  flushAutoBackup();
+  assert.ok(listBackups().some((backup) => backup.valid && backup.reason === "auto"));
 
   const batchTask = { ...task, id: "batch-task", title: "批量新增" };
   await db.saveTasks([{ ...task, title: "批量更新" }, batchTask]);

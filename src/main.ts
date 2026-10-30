@@ -7,6 +7,7 @@ import {
   requestPermission as requestNativeNotificationPermission,
   sendNotification,
 } from "@tauri-apps/plugin-notification";
+import { createSafetyBackup, flushAutoBackup, listBackups, onBackupError, readBackupSnapshot } from "./backups";
 import { getDB, normalizeSnapshot, onStorageError, SNAPSHOT_KEY, uid } from "./db";
 import { INBOX_ID } from "./seed";
 import { importFromTickTickCsv } from "./importers";
@@ -1434,6 +1435,17 @@ async function importCsvText(text: string): Promise<{ tasks: number; projects: n
   return { tasks: res.tasks.length, projects: newProjects, tags: newTags, warnings };
 }
 
+async function restoreWithProtection(data: Record<string, unknown>): Promise<{ snap: Snapshot; warnings: string[] }> {
+  const { snap: restored, warnings } = normalizeSnapshot(data);
+  flushSaves();
+  createSafetyBackup(JSON.stringify(snap));
+  await db.replaceAll(restored);
+  closeDetail(false);
+  snap = restored;
+  render();
+  return { snap: restored, warnings };
+}
+
 function openDataModal(ev?: Event): void {
   const trigger = ev?.currentTarget instanceof HTMLElement ? ev.currentTarget : null;
   const exportBtn = el("button", { class: "btn-primary", onClick: () => {
@@ -1450,15 +1462,37 @@ function openDataModal(ev?: Event): void {
       const rec = (data !== null && typeof data === "object" ? data : null) as Record<string, unknown> | null;
       if (!rec || (!Array.isArray(rec.tasks) && !Array.isArray(rec.projects))) throw new Error("不是有效的备份");
       if (!(await confirmModal("导入备份会替换当前所有数据,继续?"))) return;
-      const { snap: s, warnings } = normalizeSnapshot(rec);
-      flushSaves();
-      await db.replaceAll(s);
-      closeDetail(false);
-      snap = s; m.close(); render();
+      const { snap: restored, warnings } = await restoreWithProtection(rec);
+      m.close();
       const fixed = warnings.length ? ` · 已修复:${warnings.join(";")}` : "";
-      toast(`已导入 ${s.tasks.length} 个任务、${s.projects.length} 个清单${fixed}`, { ms: 8000 });
+      toast(`已导入 ${restored.tasks.length} 个任务、${restored.projects.length} 个清单${fixed}`, { ms: 8000 });
     } catch (e) { toast("❌ 导入失败:" + ((e as Error)?.message ?? e), { ms: 9000 }); }
   });
+
+  const backupList = el("div", { class: "backup-list" });
+  let backups: ReturnType<typeof listBackups> = [];
+  try { backups = listBackups(); } catch { backupList.append(el("div", { class: "hint" }, "无法读取自动备份")); }
+  if (!backups.length && !backupList.childElementCount) backupList.append(el("div", { class: "hint" }, "还没有自动备份"));
+  for (const backup of backups) {
+    const time = `${toDateInput(backup.createdAt)} ${fmtTime(backup.createdAt)}`;
+    const reason = backup.reason === "before-restore" ? "恢复前保护" : "自动备份";
+    const text = backup.valid
+      ? `${time} · ${reason} · ${backup.tasks} 个任务 / ${backup.projects} 个清单 / ${backup.tags} 个标签`
+      : `${time} · 备份损坏，无法恢复`;
+    const button = el("button", { class: "backup-item", type: "button" }, text) as HTMLButtonElement;
+    if (!backup.valid) button.disabled = true;
+    else button.addEventListener("click", async () => {
+      if (!(await confirmModal("恢复此备份会替换当前所有数据，当前数据会先保存为恢复前保护。继续？"))) return;
+      try {
+        const data = readBackupSnapshot(backup.key);
+        const { snap: restored, warnings } = await restoreWithProtection(data.data);
+        m.close();
+        const fixed = warnings.length ? ` · 已修复:${warnings.join(";")}` : "";
+        toast(`已恢复 ${restored.tasks.length} 个任务、${restored.projects.length} 个清单${fixed}`, { ms: 8000 });
+      } catch (e) { toast("恢复失败:" + ((e as Error)?.message ?? e), { ms: 9000 }); }
+    });
+    backupList.append(button);
+  }
 
   const csvInp = el("input", { type: "file", accept: ".csv", class: "file" }) as HTMLInputElement;
   csvInp.addEventListener("change", async () => {
@@ -1474,6 +1508,7 @@ function openDataModal(ev?: Event): void {
 
   const body = el("div", { class: "form" },
     field2("备份", el("div", {}, exportBtn)),
+    field2("自动备份（最多 5 份）", backupList),
     field2("导入 Locado 备份(.json)", jsonInp),
     field2("从滴答清单导入(.csv)", csvInp),
     el("div", { class: "hint" }, "滴答导出方法:滴答清单 → 设置 → 备份与导出 → 导出,得到 CSV 后在此选择。导入为追加,不会覆盖现有任务。"));
@@ -1556,12 +1591,13 @@ function elAddInput(): HTMLElement {
 async function boot(): Promise<void> {
   setupPWA();
   onStorageError((msg) => toast("⚠️ " + msg, { ms: 12000 }));
+  onBackupError((msg) => toast(msg, { ms: 10000 }));
   snap = await db.load();
   buildShell();
   try { applyTheme(localStorage.getItem("locado.theme") === "dark"); } catch { /* ignore */ }
   render();
   window.setInterval(tick, 1000);
-  window.addEventListener("beforeunload", flushSaves);
+  window.addEventListener("beforeunload", () => { flushSaves(); flushAutoBackup(); });
 
   // 另一个标签页改了数据时,先读对方最新快照,再把自己的未落盘修改合并进去,
   // 避免拿着旧快照整份写回、把对方刚加的任务覆盖掉。

@@ -17,6 +17,7 @@ import type {
 } from "./types";
 import { defaultSnapshot, INBOX_ID } from "./seed.ts";
 import { normalizeRecurrence } from "./recurrence.ts";
+import { scheduleAutoBackup } from "./backups.ts";
 
 export interface Database {
   load(): Promise<Snapshot>;
@@ -273,11 +274,14 @@ class LocalStore implements Database {
   }
 
   private write(s: Snapshot): void {
+    const raw = JSON.stringify(s);
     try {
-      localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(s));
+      localStorage.setItem(SNAPSHOT_KEY, raw);
     } catch {
       this.report("保存失败:浏览器存储已满或被禁用。请立即用「导入 / 导出」导出 JSON 备份。");
+      return;
     }
+    scheduleAutoBackup(raw);
   }
 
   private report(msg: string): void {
