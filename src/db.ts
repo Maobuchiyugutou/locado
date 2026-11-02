@@ -19,6 +19,11 @@ import { defaultSnapshot, INBOX_ID } from "./seed.ts";
 import { normalizeRecurrence } from "./recurrence.ts";
 import { scheduleAutoBackup } from "./backups.ts";
 
+export interface ReminderClaim {
+  task: Task;
+  notify: boolean;
+}
+
 export interface Database {
   load(): Promise<Snapshot>;
   reload(): Promise<Snapshot>;
@@ -33,8 +38,10 @@ export interface Database {
   deleteHabit(id: string): Promise<void>;
   saveFocusRecord(r: FocusRecord): Promise<void>;
   saveTask(t: Task): Promise<void>;
+  updateTask(t: Task): Promise<void>;
   saveTasks(upserts: Task[], deleteIds?: string[]): Promise<void>;
   deleteTask(id: string): Promise<void>;
+  claimReminder(id: string, at: number, now: number): Promise<ReminderClaim | null>;
 }
 
 export const SNAPSHOT_KEY = "locado.snapshot.v1";
@@ -77,6 +84,29 @@ function uniqueTags(v: unknown, valid: Set<string>): { list: string[]; dropped: 
 const DUE_VALUES: DueFilter[] = ["any", "overdue", "today", "next7", "nodate"];
 function asDue(v: unknown): DueFilter {
   return typeof v === "string" && (DUE_VALUES as string[]).includes(v) ? (v as DueFilter) : "any";
+}
+
+export function assertSnapshotImport(raw: unknown): asserts raw is Record<string, unknown> {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) throw new Error("备份必须是 JSON 对象");
+  const source = raw as Record<string, unknown>;
+  for (const key of ["tasks", "projects", "tags"]) {
+    if (!Array.isArray(source[key])) throw new Error(`备份缺少有效的 ${key} 数组`);
+  }
+  for (const key of ["filters", "habits", "focusRecords"]) {
+    if (source[key] !== undefined && !Array.isArray(source[key])) throw new Error(`备份中的 ${key} 格式无效`);
+  }
+  for (const key of ["tasks", "projects", "tags", "filters", "habits", "focusRecords"]) {
+    const items = source[key];
+    if (!Array.isArray(items)) continue;
+    const ids = new Set<string>();
+    for (const item of items) {
+      if (item === null || typeof item !== "object" || Array.isArray(item)) throw new Error(`备份中的 ${key} 含有无效记录`);
+      const id = (item as Record<string, unknown>).id;
+      if (typeof id !== "string" || !id.trim()) throw new Error(`备份中的 ${key} 含有缺失 ID 的记录`);
+      if (ids.has(id)) throw new Error(`备份中的 ${key} 含有重复 ID`);
+      ids.add(id);
+    }
+  }
 }
 
 export function normalizeSnapshot(raw: unknown): NormalizeResult {
@@ -245,9 +275,13 @@ let lastErrorAt = 0;
 // 让 UI 能收到"存不下/存不了"的提示;不注册则只写 console。
 export function onStorageError(fn: StorageErrorHandler): void { errorHandler = fn; }
 
+type LockManagerLike = { request<T>(name: string, callback: () => Promise<T>): Promise<T> };
+
+function cloneSnapshot<T>(value: T): T { return structuredClone(value); }
+
 class LocalStore implements Database {
-  // 内存里只保留一份快照,避免每次保存都重新解析整个 JSON。
   private cache: Snapshot | null = null;
+  private queue: Promise<void> = Promise.resolve();
 
   private data(): Snapshot {
     if (!this.cache) this.cache = this.loadFromDisk();
@@ -256,15 +290,23 @@ class LocalStore implements Database {
 
   private loadFromDisk(): Snapshot {
     let raw: string | null = null;
-    try { raw = localStorage.getItem(SNAPSHOT_KEY); } catch { /* 存储被禁用 */ }
+    try { raw = localStorage.getItem(SNAPSHOT_KEY); }
+    catch {
+      this.report("读取本地数据失败，已停止写入以保护现有数据。");
+      throw new Error("读取本地数据失败");
+    }
     if (raw) {
       try {
         const { snap, warnings } = normalizeSnapshot(JSON.parse(raw));
         if (warnings.length) console.warn("[Locado] 数据已自动修复:", warnings.join(";"));
         return snap;
       } catch {
-        // 解析失败:先把原文另存一份,再回退,避免直接覆盖掉唯一的数据。
-        try { localStorage.setItem(CORRUPT_PREFIX + Date.now(), raw); } catch { /* 空间不足时放弃备份 */ }
+        let protectedCopy = false;
+        try { localStorage.setItem(CORRUPT_PREFIX + Date.now(), raw); protectedCopy = true; } catch { /* 保留原始主键 */ }
+        if (!protectedCopy) {
+          this.report("本地数据损坏，原文备份失败，已停止覆盖原始数据。");
+          throw new Error("本地数据损坏且无法备份原文");
+        }
         this.report("本地数据损坏,已另存原文并重置为示例数据。");
       }
     }
@@ -279,95 +321,149 @@ class LocalStore implements Database {
       localStorage.setItem(SNAPSHOT_KEY, raw);
     } catch {
       this.report("保存失败:浏览器存储已满或被禁用。请立即用「导入 / 导出」导出 JSON 备份。");
-      return;
+      throw new Error("保存失败，数据未写入本地存储");
     }
     scheduleAutoBackup(raw);
   }
 
   private report(msg: string): void {
-    if (Date.now() - lastErrorAt < 4000) return; // 连续失败时不刷屏
+    if (Date.now() - lastErrorAt < 4000) return;
     lastErrorAt = Date.now();
     if (errorHandler) errorHandler(msg);
     else console.error("[Locado] " + msg);
   }
 
-  async load(): Promise<Snapshot> { return this.data(); }
-  async reload(): Promise<Snapshot> { this.cache = null; return this.data(); }
-  async replaceAll(s: Snapshot): Promise<void> { this.cache = s; this.write(s); }
+  private enqueue<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.queue.then(operation, operation);
+    this.queue = result.then(() => undefined, () => undefined);
+    return result;
+  }
+
+  private withWriteLock<T>(operation: () => Promise<T> | T): Promise<T> {
+    return this.enqueue(async () => {
+      if (typeof navigator !== "undefined") {
+        const locks = (navigator as unknown as { locks?: LockManagerLike }).locks;
+        if (locks) return locks.request("locado.snapshot.write", async () => operation());
+      }
+      return operation();
+    });
+  }
+
+  private mutate<T>(operation: (snapshot: Snapshot) => T | Promise<T>): Promise<T> {
+    return this.withWriteLock(async () => {
+      const latest = this.loadFromDisk();
+      const result = await operation(latest);
+      this.write(latest);
+      this.cache = latest;
+      return result;
+    });
+  }
+
+  async load(): Promise<Snapshot> { return cloneSnapshot(this.data()); }
+  async reload(): Promise<Snapshot> {
+    const fresh = this.loadFromDisk();
+    this.cache = fresh;
+    return cloneSnapshot(fresh);
+  }
+  async replaceAll(next: Snapshot): Promise<void> {
+    const replacement = cloneSnapshot(next);
+    return this.mutate((snapshot) => { Object.assign(snapshot, replacement); });
+  }
 
   async saveProject(p: Project): Promise<void> {
-    const s = this.data();
-    const i = s.projects.findIndex((x) => x.id === p.id);
-    if (i >= 0) s.projects[i] = p; else s.projects.push(p);
-    this.write(s);
+    const value = cloneSnapshot(p);
+    return this.mutate((snapshot) => {
+      const i = snapshot.projects.findIndex((x) => x.id === value.id);
+      if (i >= 0) snapshot.projects[i] = value; else snapshot.projects.push(value);
+    });
   }
   async deleteProject(id: string): Promise<void> {
-    const s = this.data();
-    s.projects = s.projects.filter((x) => x.id !== id);
-    s.tasks = s.tasks.filter((t) => t.projectId !== id);
-    this.write(s);
+    return this.mutate((snapshot) => {
+      snapshot.projects = snapshot.projects.filter((x) => x.id !== id);
+      snapshot.tasks = snapshot.tasks.filter((t) => t.projectId !== id);
+    });
   }
 
   async saveTag(t: Tag): Promise<void> {
-    const s = this.data();
-    const i = s.tags.findIndex((x) => x.id === t.id);
-    if (i >= 0) s.tags[i] = t; else s.tags.push(t);
-    this.write(s);
+    const value = cloneSnapshot(t);
+    return this.mutate((snapshot) => {
+      const i = snapshot.tags.findIndex((x) => x.id === value.id);
+      if (i >= 0) snapshot.tags[i] = value; else snapshot.tags.push(value);
+    });
   }
   async deleteTag(id: string): Promise<void> {
-    const s = this.data();
-    s.tags = s.tags.filter((x) => x.id !== id);
-    for (const t of s.tasks) t.tags = t.tags.filter((x) => x !== id);
-    this.write(s);
+    return this.mutate((snapshot) => {
+      snapshot.tags = snapshot.tags.filter((x) => x.id !== id);
+      for (const t of snapshot.tasks) t.tags = t.tags.filter((x) => x !== id);
+    });
   }
 
   async saveFilter(f: Filter): Promise<void> {
-    const s = this.data();
-    const i = s.filters.findIndex((x) => x.id === f.id);
-    if (i >= 0) s.filters[i] = f; else s.filters.push(f);
-    this.write(s);
+    const value = cloneSnapshot(f);
+    return this.mutate((snapshot) => {
+      const i = snapshot.filters.findIndex((x) => x.id === value.id);
+      if (i >= 0) snapshot.filters[i] = value; else snapshot.filters.push(value);
+    });
   }
   async deleteFilter(id: string): Promise<void> {
-    const s = this.data();
-    s.filters = s.filters.filter((x) => x.id !== id);
-    this.write(s);
+    return this.mutate((snapshot) => { snapshot.filters = snapshot.filters.filter((x) => x.id !== id); });
   }
 
   async saveHabit(h: Habit): Promise<void> {
-    const s = this.data();
-    const i = s.habits.findIndex((x) => x.id === h.id);
-    if (i >= 0) s.habits[i] = h; else s.habits.push(h);
-    this.write(s);
+    const value = cloneSnapshot(h);
+    return this.mutate((snapshot) => {
+      const i = snapshot.habits.findIndex((x) => x.id === value.id);
+      if (i >= 0) snapshot.habits[i] = value; else snapshot.habits.push(value);
+    });
   }
   async deleteHabit(id: string): Promise<void> {
-    const s = this.data();
-    s.habits = s.habits.filter((x) => x.id !== id);
-    this.write(s);
+    return this.mutate((snapshot) => { snapshot.habits = snapshot.habits.filter((x) => x.id !== id); });
   }
 
   async saveFocusRecord(r: FocusRecord): Promise<void> {
-    const s = this.data();
-    // 调用方可能已经把记录放进快照;按 id 幂等写入,避免一次番茄记成两条。
-    const i = s.focusRecords.findIndex((x) => x.id === r.id);
-    if (i >= 0) s.focusRecords[i] = r; else s.focusRecords.push(r);
-    this.write(s);
+    const value = cloneSnapshot(r);
+    return this.mutate((snapshot) => {
+      const i = snapshot.focusRecords.findIndex((x) => x.id === value.id);
+      if (i >= 0) snapshot.focusRecords[i] = value; else snapshot.focusRecords.push(value);
+    });
   }
 
   async saveTask(t: Task): Promise<void> { return this.saveTasks([t]); }
+  async updateTask(t: Task): Promise<void> {
+    const value = cloneSnapshot(t);
+    return this.mutate((snapshot) => {
+      const i = snapshot.tasks.findIndex((x) => x.id === value.id);
+      if (i < 0) return;
+      const current = snapshot.tasks[i];
+      if (current.dueDate === value.dueDate && current.reminderMinutesBefore === value.reminderMinutesBefore) {
+        value.reminded = current.reminded;
+      }
+      snapshot.tasks[i] = value;
+    });
+  }
   async saveTasks(upserts: Task[], deleteIds: string[] = []): Promise<void> {
-    const s = this.data();
+    const values = cloneSnapshot(upserts);
     const deleted = new Set(deleteIds);
-    if (deleted.size) s.tasks = s.tasks.filter((task) => !deleted.has(task.id));
-    for (const task of upserts) {
-      const i = s.tasks.findIndex((x) => x.id === task.id);
-      if (i >= 0) s.tasks[i] = task; else s.tasks.push(task);
-    }
-    this.write(s);
+    return this.mutate((snapshot) => {
+      if (deleted.size) snapshot.tasks = snapshot.tasks.filter((task) => !deleted.has(task.id));
+      for (const task of values) {
+        const i = snapshot.tasks.findIndex((x) => x.id === task.id);
+        if (i >= 0) snapshot.tasks[i] = task; else snapshot.tasks.push(task);
+      }
+    });
   }
   async deleteTask(id: string): Promise<void> {
-    const s = this.data();
-    s.tasks = s.tasks.filter((x) => x.id !== id);
-    this.write(s);
+    return this.mutate((snapshot) => { snapshot.tasks = snapshot.tasks.filter((x) => x.id !== id); });
+  }
+  async claimReminder(id: string, at: number, now: number): Promise<ReminderClaim | null> {
+    return this.mutate((snapshot) => {
+      const task = snapshot.tasks.find((item) => item.id === id);
+      if (!task || task.completed || task.reminded || task.dueDate == null || task.reminderMinutesBefore == null) return null;
+      const currentAt = task.dueDate - task.reminderMinutesBefore * 60000;
+      if (currentAt !== at || now < at) return null;
+      task.reminded = true;
+      return { task: cloneSnapshot(task), notify: now - at < 12 * 3600000 };
+    });
   }
 }
 
@@ -376,11 +472,13 @@ function isTauri(): boolean {
   return typeof (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ !== "undefined";
 }
 
+export function createLocalStore(): Database { return new LocalStore(); }
+
 let instance: Database | null = null;
 export function getDB(): Database {
   if (instance) return instance;
   void isTauri;
-  instance = new LocalStore();
+  instance = createLocalStore();
   return instance;
 }
 

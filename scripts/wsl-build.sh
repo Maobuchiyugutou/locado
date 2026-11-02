@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 在 WSL(Linux 侧)准备并构建 Locado:装 Node(nvm)、复制项目到 ext4、npm install。
+# 在 WSL(Linux 侧)准备并构建 Locado:装 Node(nvm)、复制项目到 ext4、npm ci。
 set -u
 
 echo "=== distro ==="

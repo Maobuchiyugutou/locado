@@ -8,8 +8,9 @@ import {
   sendNotification,
 } from "@tauri-apps/plugin-notification";
 import { createSafetyBackup, flushAutoBackup, listBackups, onBackupError, readBackupSnapshot } from "./backups";
-import { getDB, normalizeSnapshot, onStorageError, SNAPSHOT_KEY, uid } from "./db";
+import { assertSnapshotImport, getDB, normalizeSnapshot, onStorageError, SNAPSHOT_KEY, uid } from "./db";
 import { INBOX_ID } from "./seed";
+import { FOCUS_STORAGE_KEY, focusRecordId, idleFocus, parseFocusState, serializeFocusState, type FocusState } from "./focus";
 import { importFromTickTickCsv } from "./importers";
 import { applyQuickAddCorrections, parseTask, resolveQuickAddMetadata, type ParsedTask } from "./nlp";
 import { setupPWA } from "./pwa";
@@ -188,7 +189,7 @@ function toDateInput(ts: number | null): string {
 function fromDateInput(v: string): number | null {
   if (!v) return null;
   const [y, m, d] = v.split("-").map(Number);
-  return new Date(y, m - 1, d, 18, 0, 0, 0).getTime();
+  return new Date(y, m - 1, d, 9, 0, 0, 0).getTime();
 }
 function dueLabel(ts: number): string {
   const day = new Date(ts); day.setHours(0, 0, 0, 0);
@@ -564,9 +565,11 @@ function openDayTasks(d: Date, tasks: Task[]): void {
 async function quickAddOn(d: Date): Promise<void> {
   const title = await promptModal(`在 ${d.getMonth() + 1} 月 ${d.getDate()} 日新建任务`, "任务标题");
   if (!title || !title.trim()) return;
-  const due = new Date(d); due.setHours(18, 0, 0, 0);
+  const due = new Date(d); due.setHours(9, 0, 0, 0);
   const t: Task = { id: uid(), projectId: INBOX_ID, title: title.trim(), note: "", priority: 0, completed: false, completedAt: null, dueDate: due.getTime(), pinned: false, tags: [], subtasks: [], createdAt: Date.now(), updatedAt: Date.now() };
-  snap.tasks.push(t); await db.saveTask(t); render();
+  snap.tasks.push(t);
+  if (!(await persist(() => db.saveTask(t)))) return;
+  render();
 }
 
 /* ============ 四象限(艾森豪威尔矩阵) ============ */
@@ -605,7 +608,7 @@ function renderMatrix(list: HTMLElement): void {
         t.important = q.important;
         t.urgent = q.urgent;
         t.updatedAt = Date.now();
-        await db.saveTask(t);
+        if (!(await persist(() => db.updateTask(t)))) return;
       }
       render();
     });
@@ -654,18 +657,22 @@ function habitCard(h: Habit): HTMLElement {
 
 async function toggleCheckin(h: Habit, key: string = dayKey(new Date())): Promise<void> {
   h.checkins = h.checkins.includes(key) ? h.checkins.filter((x) => x !== key) : [...h.checkins, key];
-  await db.saveHabit(h); render();
+  if (!(await persist(() => db.saveHabit(h)))) return;
+  render();
 }
 async function addHabit(): Promise<void> {
   const name = await promptModal("新建习惯", "习惯名称");
   if (!name || !name.trim()) return;
   const h: Habit = { id: uid(), name: name.trim(), icon: HABIT_ICONS[snap.habits.length % HABIT_ICONS.length], color: PROJECT_COLORS[snap.habits.length % PROJECT_COLORS.length], checkins: [], sortOrder: snap.habits.length, createdAt: Date.now() };
-  snap.habits.push(h); await db.saveHabit(h); render();
+  snap.habits.push(h);
+  if (!(await persist(() => db.saveHabit(h)))) return;
+  render();
 }
 async function removeHabit(h: Habit): Promise<void> {
   if (!(await confirmModal(`删除习惯「${h.name}」?`))) return;
   snap.habits = snap.habits.filter((x) => x.id !== h.id);
-  await db.deleteHabit(h.id); render();
+  if (!(await persist(() => db.deleteHabit(h.id)))) return;
+  render();
 }
 
 /* ============ 番茄钟专注 ============ */
@@ -678,9 +685,22 @@ function minPref(key: string, def: number): number {
 function workMin(): number { return minPref("locado.work", 25); }
 function breakMin(): number { return minPref("locado.break", 5); }
 
-type FocusMode = "idle" | "work" | "break";
-const focus: { mode: FocusMode; running: boolean; remaining: number; total: number; endsAt: number; startedAt: number; taskId: string | null } =
-  { mode: "idle", running: false, remaining: workMin() * 60, total: workMin() * 60, endsAt: 0, startedAt: 0, taskId: null };
+function loadFocus(): FocusState {
+  try { return parseFocusState(localStorage.getItem(FOCUS_STORAGE_KEY), Date.now(), workMin() * 60, breakMin() * 60); }
+  catch { return idleFocus(workMin() * 60); }
+}
+let focusStorageWarningShown = false;
+function persistFocus(): void {
+  try {
+    localStorage.setItem(FOCUS_STORAGE_KEY, serializeFocusState(focus));
+    focusStorageWarningShown = false;
+  } catch {
+    if (focusStorageWarningShown) return;
+    focusStorageWarningShown = true;
+    toast("番茄钟状态无法保存，刷新后可能丢失。请检查浏览器存储空间。", { ms: 10000 });
+  }
+}
+const focus: FocusState = loadFocus();
 function fmt(sec: number): string { const m = Math.floor(sec / 60), s = sec % 60; return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`; }
 
 let tickDay = dayKey(new Date());
@@ -697,40 +717,94 @@ function tick(): void {
 
 /* ============ 提醒投递 ============ */
 function applyTime(t: Task, val: string): void {
-  if (!val) { t.hasTime = false; return; }
+  if (!val) {
+    t.hasTime = false;
+    if (t.dueDate != null) { const date = new Date(t.dueDate); date.setHours(9, 0, 0, 0); t.dueDate = date.getTime(); }
+    return;
+  }
   const [h, mi] = val.split(":").map(Number);
   const base = t.dueDate != null ? new Date(t.dueDate) : new Date();
   base.setHours(h, mi, 0, 0);
   t.dueDate = base.getTime(); t.hasTime = true;
 }
-function ensureNotifyPermission(): void {
-  if (isTauri()) {
-    void (async () => {
-      if (!(await hasNativeNotificationPermission())) await requestNativeNotificationPermission();
-    })().catch(() => { /* ignore */ });
-    return;
+let notificationWarningShown = false;
+function warnNotification(message = "系统通知权限未开启，将仅显示应用内提醒。"): void {
+  if (notificationWarningShown) return;
+  notificationWarningShown = true;
+  toast(message, { ms: 10000 });
+}
+async function ensureNotifyPermission(): Promise<void> {
+  try {
+    let granted: boolean;
+    if (isTauri()) {
+      granted = await hasNativeNotificationPermission();
+      if (!granted) {
+        await requestNativeNotificationPermission();
+        granted = await hasNativeNotificationPermission();
+      }
+    } else {
+      if (!("Notification" in window)) { warnNotification("当前环境不支持系统通知，将仅显示应用内提醒。"); return; }
+      let permission = Notification.permission;
+      if (permission === "default") permission = await Notification.requestPermission();
+      granted = permission === "granted";
+    }
+    if (granted) notificationWarningShown = false;
+    else warnNotification();
+  } catch {
+    warnNotification("无法获取系统通知权限，将仅显示应用内提醒。");
   }
-  try { if ("Notification" in window && Notification.permission === "default") void Notification.requestPermission(); } catch { /* ignore */ }
 }
 function fireReminder(t: Task): void {
   const body = t.title + (t.dueDate != null ? `  ·  ${dueLabel(t.dueDate)}${t.hasTime ? " " + fmtTime(t.dueDate) : ""}` : "");
   if (isTauri()) {
     void (async () => {
       if (await hasNativeNotificationPermission()) sendNotification({ title: "⏰ Locado 提醒", body });
-    })().catch(() => { /* ignore */ });
+      else warnNotification();
+    })().catch(() => warnNotification("系统通知发送失败，已保留应用内提醒。"));
   } else {
-    try { if ("Notification" in window && Notification.permission === "granted") new Notification("⏰ Locado 提醒", { body }); } catch { /* ignore */ }
+    try {
+      if (!("Notification" in window) || Notification.permission !== "granted") warnNotification();
+      else new Notification("⏰ Locado 提醒", { body });
+    } catch { warnNotification("系统通知发送失败，已保留应用内提醒。"); }
   }
   toast("⏰ " + body);
+}
+const reminderClaims = new Set<string>();
+const missedReminders = new Map<string, Task>();
+let missedReminderTimer: number | null = null;
+function queueMissedReminder(task: Task): void {
+  missedReminders.set(task.id, task);
+  if (missedReminderTimer != null) return;
+  missedReminderTimer = window.setTimeout(() => {
+    missedReminderTimer = null;
+    const tasks = [...missedReminders.values()];
+    missedReminders.clear();
+    const titles = tasks.slice(0, 3).map((item) => `「${item.title || "无标题"}」`).join("、");
+    const more = tasks.length > 3 ? " 等" : "";
+    toast(`已补记 ${tasks.length} 条较早的遗漏提醒：${titles}${more}。未发送过期系统通知。`, { ms: 12000 });
+  }, 300);
 }
 function checkReminders(): void {
   const now = Date.now();
   for (const t of snap.tasks) {
-    if (t.completed || t.reminded || t.dueDate == null || t.reminderMinutesBefore == null) continue;
+    if (reminderClaims.has(t.id) || t.completed || t.reminded || t.dueDate == null || t.reminderMinutesBefore == null) continue;
     const at = t.dueDate - t.reminderMinutesBefore * 60000;
     if (now < at) continue;
-    t.reminded = true; void db.saveTask(t);
-    if (now - at < 12 * 3600000) fireReminder(t); // 太久以前的只标记不弹
+    reminderClaims.add(t.id);
+    void (async () => {
+      try {
+        const claim = await db.claimReminder(t.id, at, now);
+        if (!claim) return;
+        const current = snap.tasks.find((task) => task.id === claim.task.id);
+        if (current) Object.assign(current, claim.task);
+        if (claim.notify) fireReminder(claim.task);
+        else queueMissedReminder(claim.task);
+      } catch {
+        await recoverPersistence();
+      } finally {
+        reminderClaims.delete(t.id);
+      }
+    })();
   }
 }
 // 统一提示:嵌入式 WebView 不支持 alert,所有反馈都走这里。
@@ -751,14 +825,18 @@ function focusStart(): void {
     focus.total = workMin() * 60;
     focus.remaining = focus.total;
     focus.startedAt = Date.now();
+    focus.sessionId = uid();
   } else if (!focus.startedAt) focus.startedAt = Date.now() - (focus.total - focus.remaining) * 1000;
   focus.endsAt = Date.now() + focus.remaining * 1000;
   focus.running = true;
+  persistFocus();
   if (view === "focus") renderMain();
 }
 function focusPause(): void {
-  focus.running = false;
   focus.remaining = Math.max(0, Math.round((focus.endsAt - Date.now()) / 1000));
+  focus.running = false;
+  focus.endsAt = 0;
+  persistFocus();
   if (view === "focus") renderMain();
 }
 function focusReset(): void {
@@ -766,24 +844,39 @@ function focusReset(): void {
   focus.mode = "idle";
   focus.total = workMin() * 60;
   focus.remaining = focus.total;
+  focus.endsAt = 0;
   focus.startedAt = 0;
+  focus.sessionId = "";
+  persistFocus();
   if (view === "focus") renderMain();
 }
 async function focusComplete(): Promise<void> {
   focus.running = false;
+  focus.remaining = 0;
+  focus.endsAt = 0;
   if (focus.mode === "work") {
-    const rec: FocusRecord = { id: uid(), startedAt: focus.startedAt || Date.now() - focus.total * 1000, minutes: Math.round(focus.total / 60), taskId: focus.taskId };
-    snap.focusRecords.push(rec); await db.saveFocusRecord(rec);
+    const rec: FocusRecord = {
+      id: focusRecordId(focus) ?? uid(),
+      startedAt: focus.startedAt || Date.now() - focus.total * 1000,
+      minutes: Math.round(focus.total / 60),
+      taskId: focus.taskId,
+    };
+    const existing = snap.focusRecords.findIndex((record) => record.id === rec.id);
+    if (existing >= 0) snap.focusRecords[existing] = rec; else snap.focusRecords.push(rec);
+    if (!(await persist(() => db.saveFocusRecord(rec)))) return;
     focus.mode = "break";
     focus.total = breakMin() * 60;
     focus.remaining = focus.total;
     focus.startedAt = 0;
+    focus.sessionId = "";
   } else {
     focus.mode = "idle";
     focus.total = workMin() * 60;
     focus.remaining = focus.total;
     focus.startedAt = 0;
+    focus.sessionId = "";
   }
+  persistFocus();
   if (view === "focus") renderMain();
 }
 
@@ -821,6 +914,7 @@ function renderFocus(list: HTMLElement): void {
         try { localStorage.setItem("locado.work", String(m)); } catch { /* ignore */ }
         focus.total = m * 60;
         focus.remaining = focus.total;
+        persistFocus();
         renderMain();
       },
     }, `${m} 分`));
@@ -830,7 +924,7 @@ function renderFocus(list: HTMLElement): void {
   const sel = selectControl(
     [{ value: "", label: "不关联任务" }, ...snap.tasks.filter((x) => !x.completed).map((t) => ({ value: t.id, label: t.title || "无标题" }))],
     focus.taskId ?? "",
-    (v) => { focus.taskId = v || null; },
+    (v) => { focus.taskId = v || null; persistFocus(); },
   );
 
   // 今日统计
@@ -878,7 +972,9 @@ async function updateRecurrence(t: Task, candidate: RecurrenceRule | null, id: s
       upserts.push(next);
     }
   }
-  await db.saveTasks(upserts);
+  if (!(await persist(async () => {
+    for (const task of upserts) await db.updateTask(task);
+  }))) return;
   openDetail(id);
 }
 
@@ -1050,23 +1146,44 @@ function closeDetail(rerender = true): void {
 const pendingSaves = new Map<string, Task>();
 let saveTimer: number | null = null;
 
-function flushSaves(): void {
-  if (saveTimer != null) { clearTimeout(saveTimer); saveTimer = null; }
-  for (const t of pendingSaves.values()) void db.saveTask(t);
+async function recoverPersistence(): Promise<void> {
   pendingSaves.clear();
+  if (saveTimer != null) { clearTimeout(saveTimer); saveTimer = null; }
+  try { snap = await db.reload(); }
+  catch { toast("无法重新读取本地数据，请刷新页面后再试。", { ms: 12000 }); }
+  closeDetail(false);
+  render();
+}
+
+async function persist(operation: () => Promise<unknown>): Promise<boolean> {
+  try { await operation(); return true; }
+  catch {
+    await recoverPersistence();
+    return false;
+  }
+}
+
+async function flushSaves(): Promise<boolean> {
+  if (saveTimer != null) { clearTimeout(saveTimer); saveTimer = null; }
+  if (!pendingSaves.size) return true;
+  const edits = [...pendingSaves.values()].map((task) => structuredClone(task));
+  pendingSaves.clear();
+  return persist(async () => {
+    for (const task of edits) await db.updateTask(task);
+  });
 }
 
 function queueSave(t: Task): void {
   t.updatedAt = Date.now();
   pendingSaves.set(t.id, t);
   if (saveTimer != null) clearTimeout(saveTimer);
-  saveTimer = window.setTimeout(flushSaves, 300);
+  saveTimer = window.setTimeout(() => { void flushSaves(); }, 300);
 }
 
 async function save(t: Task, rerender = true): Promise<void> {
   t.updatedAt = Date.now();
   pendingSaves.delete(t.id);
-  await db.saveTask(t);
+  if (!(await persist(() => db.updateTask(t)))) return;
   if (rerender) render(); else renderSidebar();
 }
 const togglingTasks = new Set<string>();
@@ -1076,7 +1193,7 @@ async function toggleDone(t: Task): Promise<void> {
   pendingSaves.delete(t.id);
   try {
     const plan = planRecurringToggle(snap.tasks, t.id, Date.now(), uid);
-    await db.saveTasks(plan.upserts, plan.deleteIds);
+    if (!(await persist(() => db.saveTasks(plan.upserts, plan.deleteIds)))) return;
     if (plan.deleteIds.length) snap.tasks = snap.tasks.filter((task) => !plan.deleteIds.includes(task.id));
     for (const task of plan.upserts) {
       const i = snap.tasks.findIndex((item) => item.id === task.id);
@@ -1108,7 +1225,8 @@ async function addTask(title: string, corrected?: ParsedTask, skipDateDefault = 
   const priority = parsed.prioritySpecified ? parsed.priority : inheritedPriority;
   const t: Task = { id: uid(), projectId, title: parsed.title, note: "", priority, completed: false, completedAt: null, dueDate, hasTime: parsed.hasTime, reminderMinutesBefore: parsed.reminderMinutesBefore, reminded: false, pinned: false, tags, subtasks: [], createdAt: Date.now(), updatedAt: Date.now(), recurrence: parsed.recurrence ?? undefined };
   const visibleInCurrentView = matchView(t, view);
-  snap.tasks.push(t); await db.saveTask(t);
+  snap.tasks.push(t);
+  if (!(await persist(() => db.saveTask(t)))) return;
   if (t.reminderMinutesBefore != null) ensureNotifyPermission();
   render();
   const notices: string[] = [];
@@ -1121,12 +1239,19 @@ async function removeTask(id: string): Promise<void> {
   const t = snap.tasks.find((x) => x.id === id);
   pendingSaves.delete(id);
   snap.tasks = snap.tasks.filter((x) => x.id !== id);
-  await db.deleteTask(id); closeDetail(); render();
+  if (!(await persist(() => db.deleteTask(id)))) return;
+  closeDetail(); render();
   if (t) {
     const backup: Task = JSON.parse(JSON.stringify(t)) as Task;
     toast(`已删除「${backup.title || "无标题"}」`, {
       ms: 12000,
-      action: { label: "撤销", run: () => { snap.tasks.push(backup); void db.saveTask(backup); render(); } },
+      action: {
+        label: "撤销",
+        run: () => {
+          snap.tasks.push(backup);
+          void persist(() => db.saveTask(backup)).then((ok) => { if (ok) render(); });
+        },
+      },
     });
   }
 }
@@ -1134,7 +1259,9 @@ async function addProject(): Promise<void> {
   const name = await promptModal("新建清单", "清单名称"); if (!name || !name.trim()) return;
   const color = PROJECT_COLORS[snap.projects.length % PROJECT_COLORS.length];
   const p = { id: uid(), name: name.trim(), color, sortOrder: snap.projects.length, createdAt: Date.now() };
-  snap.projects.push(p); await db.saveProject(p); view = "project:" + p.id; render();
+  snap.projects.push(p);
+  if (!(await persist(() => db.saveProject(p)))) return;
+  view = "project:" + p.id; render();
 }
 function tagNameExists(name: string, exceptId?: string): boolean {
   const key = name.trim().toLocaleLowerCase();
@@ -1146,7 +1273,7 @@ async function addTag(): Promise<void> {
   if (tagNameExists(name)) { toast("已存在同名标签"); return; }
   const tag = { id: uid(), name: name.trim(), color: PROJECT_COLORS[snap.tags.length % PROJECT_COLORS.length] };
   snap.tags.push(tag);
-  await db.saveTag(tag);
+  if (!(await persist(() => db.saveTag(tag)))) return;
   view = "tag:" + tag.id;
   setCollapsed("tags", false);
   render();
@@ -1158,7 +1285,7 @@ async function renameTag(id: string): Promise<void> {
   if (!name || !name.trim() || name.trim() === tag.name) return;
   if (tagNameExists(name, id)) { toast("已存在同名标签"); return; }
   tag.name = name.trim();
-  await db.saveTag(tag);
+  if (!(await persist(() => db.saveTag(tag)))) return;
   render();
 }
 async function removeTag(id: string): Promise<void> {
@@ -1168,7 +1295,7 @@ async function removeTag(id: string): Promise<void> {
   if (!(await confirmModal(`删除标签「${tag.name}」？将从 ${count} 个任务中移除，但不会删除任务。`))) return;
   snap.tags = snap.tags.filter((t) => t.id !== id);
   for (const t of snap.tasks) t.tags = t.tags.filter((tagId) => tagId !== id);
-  await db.deleteTag(id);
+  if (!(await persist(() => db.deleteTag(id)))) return;
   if (view === "tag:" + id) view = "smart:all";
   render();
   toast(`已删除标签「${tag.name}」`);
@@ -1182,7 +1309,7 @@ async function removeProject(id: string): Promise<void> {
   for (const t of doomed) pendingSaves.delete(t.id);
   snap.projects = snap.projects.filter((x) => x.id !== id);
   snap.tasks = snap.tasks.filter((t) => t.projectId !== id);
-  await db.deleteProject(id);
+  if (!(await persist(() => db.deleteProject(id)))) return;
   if (view === "project:" + id) view = "smart:today";
   render();
   toast(`已删除清单「${p.name}」及 ${doomed.length} 个任务`, {
@@ -1192,9 +1319,10 @@ async function removeProject(id: string): Promise<void> {
       run: () => {
         snap.projects.push(p);
         snap.tasks.push(...doomed);
-        void db.saveProject(p);
-        for (const t of doomed) void db.saveTask(t);
-        render();
+        void persist(async () => {
+          await db.saveProject(p);
+          await db.saveTasks(doomed);
+        }).then((ok) => { if (ok) render(); });
       },
     },
   });
@@ -1361,7 +1489,7 @@ function openFilterEditor(existing?: Filter): void {
 
   const saveBtn = el("button", { class: "btn-primary", onClick: async () => {
     const f: Filter = { id: existing ? existing.id : uid(), name: nameInp.value.trim() || "未命名筛选器", color, rule: { projectIds: [...projSet], tagIds: [...tagSet], priorities: [...prios], due: dueSel.getValue() as DueFilter } };
-    await db.saveFilter(f);
+    if (!(await persist(() => db.saveFilter(f)))) return;
     const i = snap.filters.findIndex((x) => x.id === f.id);
     if (i >= 0) snap.filters[i] = f; else snap.filters.push(f);
     view = "filter:" + f.id; m.close(); render();
@@ -1369,7 +1497,7 @@ function openFilterEditor(existing?: Filter): void {
 
   const foot: Node[] = [];
   if (!isNew) foot.push(el("button", { class: "text-btn danger", onClick: async () => {
-    await db.deleteFilter(existing!.id);
+    if (!(await persist(() => db.deleteFilter(existing!.id)))) return;
     snap.filters = snap.filters.filter((x) => x.id !== existing!.id);
     if (view === "filter:" + existing!.id) view = "smart:today";
     m.close(); render();
@@ -1398,6 +1526,9 @@ async function download(name: string, text: string): Promise<void> {
 async function importCsvText(text: string): Promise<{ tasks: number; projects: number; tags: number; warnings: string[] }> {
   const res = importFromTickTickCsv(text);
   const warnings: string[] = [];
+  if (!(await flushSaves())) throw new Error("当前修改未保存，已取消导入");
+  snap = await db.reload();
+  createSafetyBackup(JSON.stringify(snap));
 
   // 同名清单/标签复用已有的,避免重复导入产生一堆副本。
   const projByName = new Map(snap.projects.map((p) => [p.name, p.id] as [string, string]));
@@ -1431,15 +1562,17 @@ async function importCsvText(text: string): Promise<{ tasks: number; projects: n
   }
   if (orphan) warnings.push(`${orphan} 个任务未找到所属清单,已放入收集箱`);
 
-  await db.replaceAll(snap);
+  if (!(await persist(() => db.replaceAll(snap)))) throw new Error("导入未保存，已恢复原数据");
   return { tasks: res.tasks.length, projects: newProjects, tags: newTags, warnings };
 }
 
 async function restoreWithProtection(data: Record<string, unknown>): Promise<{ snap: Snapshot; warnings: string[] }> {
+  assertSnapshotImport(data);
   const { snap: restored, warnings } = normalizeSnapshot(data);
-  flushSaves();
+  if (!(await flushSaves())) throw new Error("当前修改未保存，已取消恢复");
+  snap = await db.reload();
   createSafetyBackup(JSON.stringify(snap));
-  await db.replaceAll(restored);
+  if (!(await persist(() => db.replaceAll(restored)))) throw new Error("恢复未保存，已保留原数据");
   closeDetail(false);
   snap = restored;
   render();
@@ -1459,10 +1592,9 @@ function openDataModal(ev?: Event): void {
     jsonInp.value = "";
     try {
       const data: unknown = JSON.parse(await f.text());
-      const rec = (data !== null && typeof data === "object" ? data : null) as Record<string, unknown> | null;
-      if (!rec || (!Array.isArray(rec.tasks) && !Array.isArray(rec.projects))) throw new Error("不是有效的备份");
+      assertSnapshotImport(data);
       if (!(await confirmModal("导入备份会替换当前所有数据,继续?"))) return;
-      const { snap: restored, warnings } = await restoreWithProtection(rec);
+      const { snap: restored, warnings } = await restoreWithProtection(data);
       m.close();
       const fixed = warnings.length ? ` · 已修复:${warnings.join(";")}` : "";
       toast(`已导入 ${restored.tasks.length} 个任务、${restored.projects.length} 个清单${fixed}`, { ms: 8000 });
@@ -1597,29 +1729,29 @@ async function boot(): Promise<void> {
   try { applyTheme(localStorage.getItem("locado.theme") === "dark"); } catch { /* ignore */ }
   render();
   window.setInterval(tick, 1000);
-  window.addEventListener("beforeunload", () => { flushSaves(); flushAutoBackup(); });
+  tick();
+  window.addEventListener("beforeunload", () => { void flushSaves(); persistFocus(); flushAutoBackup(); });
 
-  // 另一个标签页改了数据时,先读对方最新快照,再把自己的未落盘修改合并进去,
-  // 避免拿着旧快照整份写回、把对方刚加的任务覆盖掉。
+  // 跨标签页只刷新界面;未落盘编辑仍由 updateTask 在写锁内合并,
+  // 已被其它标签页删除的任务直接丢弃,不得重新插回快照。
   let syncTimer: number | null = null;
   window.addEventListener("storage", (e) => {
     if (e.key !== SNAPSHOT_KEY) return;
     if (syncTimer != null) clearTimeout(syncTimer);
     syncTimer = window.setTimeout(() => {
       void (async () => {
-        const fresh = await db.reload();
-        if (pendingSaves.size) {
-          for (const t of pendingSaves.values()) {
-            const i = fresh.tasks.findIndex((x) => x.id === t.id);
-            if (i >= 0) fresh.tasks[i] = t; else fresh.tasks.push(t);
+        try {
+          const fresh = await db.reload();
+          for (const [id, task] of pendingSaves) {
+            const i = fresh.tasks.findIndex((item) => item.id === id);
+            if (i >= 0) fresh.tasks[i] = task;
+            else pendingSaves.delete(id);
           }
-          pendingSaves.clear();
-          await db.replaceAll(fresh);
-        }
-        snap = fresh;
-        closeDetail(false);
-        render();
-        toast("已同步其它标签页的修改", { ms: 2500 });
+          snap = fresh;
+          closeDetail(false);
+          render();
+          toast("已同步其它标签页的修改", { ms: 2500 });
+        } catch { /* 保留当前界面,等待下一次同步 */ }
       })();
     }, 300);
   });

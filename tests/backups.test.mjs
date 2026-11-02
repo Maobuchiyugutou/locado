@@ -89,3 +89,19 @@ test("备份写失败不影响已有备份，保护备份失败会抛错", () =>
   assert.doesNotThrow(() => { scheduleAutoBackup(raw("new")); flushAutoBackup(); });
   assert.equal(listBackups().length, 5);
 });
+
+test("同一毫秒创建的备份仍按真实创建顺序排列", () => {
+  globalThis.localStorage = new MemoryStorage();
+  mock.timers.enable({ apis: ["Date"], now: new Date("2026-10-30T08:00:00") });
+  try {
+    for (let i = 0; i < 5; i++) createSafetyBackup(raw(`same-ms-${i}`));
+  } finally { mock.timers.reset(); }
+  const backups = listBackups();
+  assert.equal(backups.length, 5);
+  assert.equal(backups[0].reason, "before-restore");
+  assert.deepEqual(
+    backups.map((backup) => readBackupSnapshot(backup.key).data.tasks[0].id),
+    ["same-ms-4", "same-ms-3", "same-ms-2", "same-ms-1", "same-ms-0"],
+  );
+  for (let i = 1; i < backups.length; i++) assert.ok(backups[i - 1].createdAt > backups[i].createdAt);
+});

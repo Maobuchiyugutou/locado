@@ -6,7 +6,7 @@ function now(): number { return Date.now(); }
 
 function daysFromNow(d: number): number {
   const dt = new Date();
-  dt.setHours(18, 0, 0, 0);
+  dt.setHours(9, 0, 0, 0);
   dt.setDate(dt.getDate() + d);
   return dt.getTime();
 }

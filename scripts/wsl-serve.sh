@@ -12,7 +12,6 @@ DEST="$HOME/Locado"
 mkdir -p "$DEST"
 rsync -a --delete \
   --exclude node_modules \
-  --exclude package-lock.json \
   --exclude .git \
   --exclude .vscode \
   --exclude .claude \
@@ -21,7 +20,7 @@ rsync -a --delete \
   "$SRC"/ "$DEST"/ || exit 1
 
 cd "$DEST" || exit 1
-npm install --no-audit --no-fund || exit 1
+npm ci --no-audit --no-fund || exit 1
 npm run build || exit 1
 
 echo "Locado 已构建,正在 http://localhost:1420 提供服务(保持此窗口开启)"

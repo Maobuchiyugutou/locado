@@ -56,7 +56,7 @@ function calendarDate(year: number, month: number, day: number): Date | null {
 }
 
 interface DateHit { date: Date | null; hits: string[]; }
-function detectDate(text: string): DateHit {
+function detectSingleDate(text: string): DateHit {
   const hits: string[] = [];
   const today = () => midnight(new Date());
 
@@ -129,6 +129,25 @@ function detectDate(text: string): DateHit {
   }
 
   return { date: null, hits };
+}
+
+const DATE_EXPRESSION = new RegExp([
+  "大后天|后天|明天|明日|明晚|明早|今天|今晚|今日|昨天",
+  `(?:${NUM})\\s*天后`,
+  "(?:本|这|下)?\\s*(?:个)?\\s*月底",
+  "(?:下|本|这周|这)?\\s*(?:周|星期|礼拜)\\s*[一二三四五六天日\\d]",
+  `\\d{4}\\s*年\\s*(?:${NUM})\\s*月\\s*(?:${NUM})\\s*[日号]?`,
+  `(?:${NUM})\\s*月\\s*(?:${NUM})\\s*[日号]`,
+  `(?:${NUM})\\s*[日号]`,
+].join("|"), "g");
+
+function detectDate(text: string): DateHit {
+  // 按文本顺序采用第一个有效日期;后续冲突日期不进入 strip,保留在标题中。
+  for (const match of text.matchAll(DATE_EXPRESSION)) {
+    const candidate = detectSingleDate(match[0]);
+    if (candidate.date) return candidate;
+  }
+  return { date: null, hits: [] };
 }
 
 interface TimeHit { h: number; mi: number; strong: boolean; hits: string[]; }

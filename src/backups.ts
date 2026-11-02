@@ -88,6 +88,8 @@ export function readBackupSnapshot(key: string): { data: Record<string, unknown>
   return { data: snapshot, createdAt: record.createdAt, reason: record.reason };
 }
 
+let lastBackupCreatedAt = 0;
+
 export function createBackup(raw: string, reason: BackupReason): BackupWriteResult {
   snapshotFromRaw(raw);
   if (reason === "auto") {
@@ -97,7 +99,9 @@ export function createBackup(raw: string, reason: BackupReason): BackupWriteResu
     }
   }
 
-  const createdAt = Date.now();
+  const latestCreatedAt = listBackups().reduce((latest, backup) => Math.max(latest, backup.createdAt), 0);
+  const createdAt = Math.max(Date.now(), lastBackupCreatedAt + 1, latestCreatedAt + 1);
+  lastBackupCreatedAt = createdAt;
   const key = `${BACKUP_PREFIX}${createdAt}.${Math.random().toString(36).slice(2, 9)}`;
   const record: BackupRecord = { v: 1, createdAt, reason, raw };
   localStorage.setItem(key, JSON.stringify(record));

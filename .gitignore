@@ -13,4 +13,5 @@ src-tauri/gen
 !.vscode/extensions.json
 .idea
 .claude/
+.trae/
 .local/

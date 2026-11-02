@@ -6,10 +6,29 @@ Notable changes to Locado are documented here. The format is based on [Keep a Ch
 
 ### Added
 
+- Natural-language Quick Add for dates, times, projects, tags, priorities, reminders, and repeat rules, with per-field corrections.
+- Daily, weekly, monthly, yearly, and after-completion recurring tasks with linked next occurrences.
+- Five rotating local backups, pre-restore protection copies, and restore previews with timestamps and task/project/tag counts.
+- Tauri 2 desktop shell configuration and Linux native build checks; no native installers have been published.
 - Public-repository documentation, application screenshot, issue forms, and pull request checklist.
 - Full Chinese README and a cross-platform native distribution plan.
 - GitHub Actions for automated tests and production builds.
 - MIT license, repository metadata, and structured development scripts.
+
+### Changed
+
+- Coordinate snapshot mutations with queued writes, Web Locks when available, and fresh reads to reduce stale cross-tab overwrites.
+- Surface persistence failures and reload saved state instead of leaving unsaved edits presented as successfully stored.
+- Validate backup structure and record IDs before restore, and flush pending edits and create protection copies before JSON restore or CSV import.
+- Claim reminders through persistent storage and preserve reminder state during unrelated task edits to avoid duplicate delivery.
+- Persist running and paused focus sessions across reloads, including task links and stable completion record IDs.
+- Check reminders immediately at startup, summarize expired missed reminders in the app, and explain notification permission failures.
+- Standardize all-day tasks at 09:00 local time and keep later conflicting date text when Quick Add uses the first valid date.
+
+### Fixed
+
+- Prevent stale pending edits from recreating tasks deleted in another tab.
+- Keep backup timestamps strictly increasing so rapid backups retain a deterministic newest-first order.
 
 ## [0.1.0] - 2026-10-29
 

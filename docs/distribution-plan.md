@@ -11,16 +11,17 @@
 已有：
 
 - Vite + TypeScript 前端、PWA 和离线应用壳
-- 浏览器 `localStorage` 数据层、JSON 备份和 CSV 导入
-- Tauri 2 前端依赖、自动化测试和生产构建
-- 基础 GitHub Actions CI
+- 浏览器/Tauri WebView `localStorage` 数据层、JSON 备份恢复、最新 5 份本地备份和 CSV 导入
+- `src-tauri` 中的 Tauri 2 原生壳，包括窗口、图标、CSP、单实例，以及原生文件保存和通知插件
+- 自动化测试、前端生产构建，以及 GitHub Actions 中的 Ubuntu Rust stable、`cargo check` 和 Linux 不打包原生构建检查
 
 缺少：
 
-- `src-tauri` 原生应用、窗口与打包配置
-- 原生备份导出、通知和持久化验收
-- 三平台构建矩阵、签名、公证和 Release 产物
+- Windows、macOS、Linux 真实环境中的原生功能与兼容性验收
+- 三平台安装包构建矩阵、签名、公证和 Release 产物
 - 面向普通用户的下载与排障教程
+
+**原生验收状态：** 原生壳已配置，CI 已加入 Linux 编译级检查，但这不代表三平台验收通过，也不代表安装包已发布。离线启动、重启持久化、JSON 备份/恢复、文件保存权限和应用运行时提醒仍需在各平台逐项实测；阶段 A 当前是“壳已配置，功能验收未完成”。
 
 WSL 只是当前开发电脑的限制，不是 Locado 的运行依赖。其他开发者可以在 Windows、macOS 或 Linux 上直接使用原生 Node.js 24+ 构建。
 
@@ -50,14 +51,14 @@ Locado_<version>_linux-x64.deb
 
 ### 阶段 A：最小 Tauri 原生壳
 
-- 创建 `src-tauri`，复用现有 `dist` 前端，不重写业务逻辑。
-- 配置应用标识、版本、窗口尺寸、图标、单实例和严格 CSP。
+- 已创建 `src-tauri`，复用现有 `dist` 前端，不重写业务逻辑。
+- 已配置应用标识、版本、窗口尺寸、图标、单实例和严格 CSP。
 - 原生模式不注册 Service Worker；静态资源由 Tauri 本地协议加载。
-- 验证 JSON 导出在原生环境使用可靠的文件保存方式。
+- 已接入原生文件保存对话框与通知插件；JSON 导出路径、权限和提醒仍需真实系统验收。
 - 保持现有 `localStorage`，不把 SQLite 迁移与安装包绑定。
-- Windows、macOS、Linux 分别完成开发模式启动和生产构建。
+- Windows、macOS、Linux 仍需分别完成开发模式启动、生产构建和功能验收；Linux CI 不打包构建只覆盖其中一部分编译检查。
 
-验收：应用能离线启动，新增任务后重启仍存在，主题、提醒和 JSON 备份恢复可用。
+验收（尚未全部完成）：应用能离线启动，新增任务后重启仍存在，主题、应用运行时提醒和 JSON 备份恢复可用。
 
 ### 阶段 B：GitHub Actions 构建矩阵
 

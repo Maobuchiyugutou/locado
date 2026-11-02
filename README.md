@@ -14,12 +14,20 @@ Built with Vite and TypeScript, without a UI framework. Your data stays in your 
 
 ## Highlights
 
+- **Natural-language Quick Add**: capture dates, times, projects, tags, priorities, reminders, and repeat rules in one sentence; correct individual parsed details before creating the task.
 - **Tasks, your way**: projects, tags, subtasks, notes, priorities, reminders, pinning, and independent important/urgent classification.
+- **Recurring tasks**: daily, weekly, monthly, yearly, and after-completion rules, with the next occurrence created when the current one is completed.
 - **Useful planning views**: Today, Next 7 Days, All, Completed, calendar, custom filters, and a drag-and-drop Eisenhower matrix.
-- **Sustainable routines**: habit check-ins and a Pomodoro-style focus timer linked to tasks.
+- **Sustainable routines**: habit check-ins and a task-linked Pomodoro timer that restores running or paused sessions after a reload.
 - **Local-first and offline-capable**: no account, telemetry, or backend required. Install the PWA and keep working offline.
-- **Portable data**: JSON backup and restore, plus TickTick CSV import.
+- **Portable data**: JSON backup and restore, TickTick CSV import, and five rotating local backups with restore previews.
 - **Desktop-focused interface**: light and dark themes, liquid-glass styling, keyboard navigation, and accessible dialogs.
+
+**Reminder scope:** reminders are checked and delivered only while Locado is running. Closing the browser tab, PWA, or desktop window stops reminder checks; there is no background notification service.
+
+## Desktop shell status
+
+The Tauri 2 desktop shell is configured in `src-tauri` and reuses the existing frontend. Native build and per-platform acceptance work is still in progress; no Windows, macOS, or Linux installers have been published. See the [distribution plan](docs/distribution-plan.md) for the current status. The commands below run the browser/PWA version.
 
 ## Quick start
 
@@ -53,9 +61,10 @@ The test suite covers natural-language dates, CSV imports, snapshot compatibilit
 
 ## Your data
 
-Locado currently stores its snapshot in browser `localStorage`. No task data is sent to a server.
+Locado currently stores its snapshot in browser or Tauri WebView `localStorage`. No task data is sent to a server.
 
-- Back up regularly with **Import / Export → Export JSON backup**.
+- Back up regularly with **Import / Export → Export JSON backup**. Automatic backups use the same local storage and do not replace an independently exported copy.
+- Locado retains the latest five local backups, including pre-restore protection copies. The restore list previews each backup's timestamp and task/project/tag counts before you confirm replacement.
 - Browser site data is isolated by origin. Keep using `http://localhost:1420` rather than switching between `localhost`, `127.0.0.1`, or different ports.
 - Clearing site data or switching browsers can remove or hide your local snapshot. Export before doing either.
 

@@ -43,6 +43,48 @@ test("日期、具体时刻和提醒可组合解析", () => {
   });
 });
 
+test("纯日期统一为本地 09:00 的全天任务", () => {
+  withNow(new Date("2026-10-29T08:00:00"), () => {
+    const cases = [
+      ["明天 开会", "2026-10-30"],
+      ["2026年11月3日 开会", "2026-11-03"],
+      ["每天 背单词", "2026-10-29"],
+    ];
+    for (const [input, expected] of cases) {
+      const result = parseTask(input);
+      assert.ok(result.dueDate != null, input);
+      const due = new Date(result.dueDate);
+      assert.equal(dateKey(result.dueDate), expected, input);
+      assert.equal(due.getHours(), 9, input);
+      assert.equal(due.getMinutes(), 0, input);
+      assert.equal(result.hasTime, false, input);
+    }
+
+    const noTime = applyQuickAddCorrections(parseTask("明天9点 开会"), new Set(["time"]));
+    assert.equal(new Date(noTime.dueDate).getHours(), 9);
+    assert.equal(new Date(noTime.dueDate).getMinutes(), 0);
+    assert.equal(noTime.hasTime, false);
+  });
+});
+
+test("多个冲突日期采用第一个有效日期并保留后续日期文字", () => {
+  withNow(new Date("2026-10-29T08:00:00"), () => {
+    const cases = [
+      ["明天 后天 开会", "2026-10-30", "后天 开会", "明天"],
+      ["2026年11月5日 明天 开会", "2026-11-05", "明天 开会", "2026年11月5日"],
+      ["2月30日 明天 学习", "2026-10-30", "2月30日 学习", "明天"],
+    ];
+    for (const [input, expectedDate, expectedTitle, expectedDatePart] of cases) {
+      const result = parseTask(input);
+      assert.ok(result.dueDate != null, input);
+      assert.equal(dateKey(result.dueDate), expectedDate, input);
+      assert.equal(result.title, expectedTitle, input);
+      assert.equal(result.parts.find((part) => part.kind === "date")?.text, expectedDatePart, input);
+      assert.equal(result.hasTime, false, input);
+    }
+  });
+});
+
 test("弱中文表达不会被误判为日期", () => {
   const result = parseTask("有一点问题需要处理");
   assert.equal(result.dueDate, null);

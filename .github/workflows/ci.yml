@@ -29,3 +29,17 @@ jobs:
 
       - name: Check types and build production assets
         run: npm run build
+
+      - name: Install Tauri Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      - name: Set up Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check Rust workspace
+        run: cargo check --manifest-path src-tauri/Cargo.toml
+
+      - name: Build Tauri Linux application without bundling
+        run: npm run tauri -- build --no-bundle
