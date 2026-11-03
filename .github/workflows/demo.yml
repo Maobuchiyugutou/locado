@@ -37,6 +37,7 @@ jobs:
         run: npm run build
         env:
           LOCADO_BASE: /${{ github.event.repository.name }}/
+          LOCADO_BUILD_ID: ${{ github.sha }}
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5

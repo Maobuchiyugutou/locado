@@ -88,6 +88,10 @@ body {
   overflow: hidden;
 }
 
+.storage-block { max-width: 520px; max-height: 80vh; margin: 12vh auto 0; padding: 28px; overflow-y: auto; border: 1px solid var(--glass-border); border-radius: var(--radius-lg); background: var(--glass-main); box-shadow: var(--shadow-lg); }
+.storage-block h1 { margin-bottom: 14px; font-size: 22px; }
+.storage-block p { margin: 10px 0 18px; color: var(--text-soft); line-height: 1.7; }
+
 button { font-family: inherit; cursor: pointer; border: none; background: none; color: inherit; -webkit-tap-highlight-color: transparent; }
 input, textarea, select { font-family: inherit; font-size: inherit; color: inherit; }
 button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {

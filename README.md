@@ -68,6 +68,12 @@ Locado stores data in the browser or Tauri WebView's `localStorage`. Task data i
 - Browser/PWA and desktop data are stored separately; migrate between them with JSON export and import.
 - Reminders are checked only while Locado is running. Closing the app stops reminder checks; there is no background notification service.
 
+## Updates and data compatibility
+
+- The online demo and installed PWA check for updates on launch, when returning to the foreground, and every 30 minutes. Choose **Update now** to save pending edits before reloading. Older versions without the update prompt need one manual refresh first.
+- When running from source, run `git pull` and restart the launcher, keeping `http://localhost:1420` unchanged.
+- Snapshots include a `schemaVersion`. Locado creates a protected backup before migration and stops writing when data comes from a newer version, preventing an older app from overwriting newer history.
+
 ## Development
 
 With Node.js 24 or newer installed:

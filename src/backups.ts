@@ -2,7 +2,7 @@ export const BACKUP_PREFIX = "locado.snapshot.v1.backup.";
 const BACKUP_LIMIT = 5;
 const AUTO_BACKUP_DELAY = 3000;
 
-export type BackupReason = "auto" | "before-restore";
+export type BackupReason = "auto" | "before-restore" | "before-migration";
 
 interface BackupRecord {
   v: 1;
@@ -50,7 +50,7 @@ function readRecord(key: string): { record: BackupRecord; snapshot: BackupSnapsh
   if (value === null || typeof value !== "object") throw new Error("备份格式无效");
   const record = value as Partial<BackupRecord>;
   if (record.v !== 1 || typeof record.createdAt !== "number" || !Number.isFinite(record.createdAt)
-    || (record.reason !== "auto" && record.reason !== "before-restore") || typeof record.raw !== "string") {
+    || !["auto", "before-restore", "before-migration"].includes(record.reason ?? "") || typeof record.raw !== "string") {
     throw new Error("备份信息无效");
   }
   return { record: record as BackupRecord, snapshot: snapshotFromRaw(record.raw) };
@@ -150,7 +150,7 @@ export function scheduleAutoBackup(raw: string): void {
   if (typeof nodeTimer.unref === "function") nodeTimer.unref();
 }
 
-export function createSafetyBackup(raw: string): BackupWriteResult {
+export function createSafetyBackup(raw: string, reason: "before-restore" | "before-migration" = "before-restore"): BackupWriteResult {
   cancelScheduled();
-  return createBackup(raw, "before-restore");
+  return createBackup(raw, reason);
 }

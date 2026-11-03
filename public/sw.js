@@ -1,6 +1,6 @@
 // 离线应用壳:HTML 网络优先(便于升级),静态资源缓存优先(带 hash 的构建产物可长期复用)。
 // 只处理同源 GET;任务数据在 localStorage,不经过 Service Worker。
-const CACHE = "locado-shell-v4";
+const CACHE = "locado-shell-v5";
 const BASE = new URL("./", self.location.href).pathname;
 const INDEX = BASE + "index.html";
 const SHELL = [
@@ -64,6 +64,8 @@ self.addEventListener("fetch", (event) => {
   if (request.method !== "GET") return;
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
+  // 版本检查始终走网络，不能被旧的构建信息缓存。
+  if (url.pathname === BASE + "version.json") return;
   // 生产 SW 可能恰好控制着一个 dev 页面;开发资源直接走网络,不入离线缓存。
   const devPrefixes = ["/@vite/", "/@fs/", "/@id/", "/src/", "/node_modules/"];
   if (devPrefixes.some((prefix) => url.pathname.startsWith(prefix))) return;
