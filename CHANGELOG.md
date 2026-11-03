@@ -4,6 +4,11 @@ Notable changes to Locado are documented here. The format is based on [Keep a Ch
 
 ## [Unreleased]
 
+### Added
+
+- GitHub Pages online demo deployment with subpath-aware production and PWA builds.
+- Local-only usage statistics for active days, task creation and completion, Quick Add corrections, exports, and recent activity; no task content or telemetry is collected.
+
 ## [0.2.0] - 2026-11-03
 
 ### Added

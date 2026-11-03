@@ -2,6 +2,8 @@ import { defineConfig } from "vite";
 
 // Tauri expects a fixed port and no auto-clearing of the terminal.
 export default defineConfig({
+  // GitHub Pages 部署在仓库子路径；本地和其他静态托管默认使用根路径。
+  base: process.env.LOCADO_BASE || "/",
   clearScreen: false,
   server: {
     port: 1420,
