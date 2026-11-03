@@ -16,6 +16,7 @@ import { applyQuickAddCorrections, parseTask, resolveQuickAddMetadata, type Pars
 import { setupPWA } from "./pwa";
 import { nextRecurringDue, normalizeRecurrence, planRecurringToggle, recurrenceSummary } from "./recurrence";
 import { clearUsage, readUsage, recordUsage, summarizeUsage } from "./usage";
+import { CURRENT_SCHEMA_VERSION, UnsupportedSchemaVersionError } from "./migrations";
 import {
   HABIT_ICONS,
   PROJECT_COLORS,
@@ -30,7 +31,7 @@ import {
 } from "./types";
 
 const db = getDB();
-let snap: Snapshot = { projects: [], tags: [], tasks: [], filters: [], habits: [], focusRecords: [] };
+let snap: Snapshot = { schemaVersion: CURRENT_SCHEMA_VERSION, projects: [], tags: [], tasks: [], filters: [], habits: [], focusRecords: [] };
 let view = "smart:today";
 let selectedId: string | null = null;
 let calMonth = firstOfMonth(new Date());
@@ -1619,7 +1620,7 @@ function openDataModal(ev?: Event): void {
   if (!backups.length && !backupList.childElementCount) backupList.append(el("div", { class: "hint" }, "还没有自动备份"));
   for (const backup of backups) {
     const time = `${toDateInput(backup.createdAt)} ${fmtTime(backup.createdAt)}`;
-    const reason = backup.reason === "before-restore" ? "恢复前保护" : "自动备份";
+    const reason = backup.reason === "before-restore" ? "恢复前保护" : backup.reason === "before-migration" ? "迁移前保护" : "自动备份";
     const text = backup.valid
       ? `${time} · ${reason} · ${backup.tasks} 个任务 / ${backup.projects} 个清单 / ${backup.tags} 个标签`
       : `${time} · 备份损坏，无法恢复`;
@@ -1789,11 +1790,46 @@ function elAddInput(): HTMLElement {
   return el("div", { class: "quick-add" }, input, preview);
 }
 
+function renderUnsupportedData(error: UnsupportedSchemaVersionError): void {
+  const app = $("#app");
+  app.innerHTML = "";
+  app.append(el("main", { class: "storage-block" },
+    el("h1", {}, "需要更新 Locado"),
+    el("p", {}, `当前数据由数据版本 ${error.schemaVersion} 创建，这个应用只支持到版本 ${CURRENT_SCHEMA_VERSION}。`),
+    el("p", {}, "为避免旧应用覆盖新数据，当前版本已停止写入，原有数据没有被修改。请升级到最新版本后重试。"),
+    el("button", { class: "btn-primary", onClick: () => window.location.reload() }, "重新检查")));
+}
+
 async function boot(): Promise<void> {
-  setupPWA();
+  setupPWA(() => {
+    toast("发现新版本，刷新即可更新，历史数据会保留。", {
+      ms: 30000,
+      action: {
+        label: "立即更新",
+        run: () => {
+          void flushSaves().then((saved) => {
+            if (!saved) {
+              toast("当前修改尚未保存，请先导出备份再刷新。", { ms: 12000 });
+              return;
+            }
+            persistFocus();
+            flushAutoBackup();
+            window.location.reload();
+          });
+        },
+      },
+    });
+  });
   onStorageError((msg) => toast("⚠️ " + msg, { ms: 12000 }));
   onBackupError((msg) => toast(msg, { ms: 10000 }));
-  snap = await db.load();
+  try { snap = await db.load(); }
+  catch (error) {
+    if (error instanceof UnsupportedSchemaVersionError) {
+      renderUnsupportedData(error);
+      return;
+    }
+    throw error;
+  }
   buildShell();
   try { applyTheme(localStorage.getItem("locado.theme") === "dark"); } catch { /* ignore */ }
   render();

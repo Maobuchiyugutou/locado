@@ -90,6 +90,7 @@ export interface FocusRecord {
 
 // 整个应用的持久化数据快照(本地存储实现用它,Tauri/SQLite 版按表拆分)。
 export interface Snapshot {
+  schemaVersion: number;
   projects: Project[];
   tags: Tag[];
   tasks: Task[];

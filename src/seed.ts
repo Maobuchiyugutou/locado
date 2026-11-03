@@ -1,3 +1,4 @@
+import { CURRENT_SCHEMA_VERSION } from "./migrations.ts";
 import type { Snapshot, Task } from "./types.ts";
 
 export const INBOX_ID = "inbox";
@@ -39,6 +40,7 @@ export function defaultSnapshot(): Snapshot {
   });
 
   return {
+    schemaVersion: CURRENT_SCHEMA_VERSION,
     projects: [
       { id: INBOX_ID, name: "收集箱", color: "#3e63dd", sortOrder: 0, createdAt: t },
       { id: "work", name: "工作", color: "#e5484d", sortOrder: 1, createdAt: t },

@@ -8,6 +8,8 @@ Notable changes to Locado are documented here. The format is based on [Keep a Ch
 
 - GitHub Pages online demo deployment with subpath-aware production and PWA builds.
 - Local-only usage statistics for active days, task creation and completion, Quick Add corrections, exports, and recent activity; no task content or telemetry is collected.
+- Versioned snapshot migrations with pre-migration protection backups and write protection for data created by newer app versions.
+- Build metadata and PWA update checks with a save-before-reload update prompt.
 
 ## [0.2.0] - 2026-11-03
 

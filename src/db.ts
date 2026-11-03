@@ -17,7 +17,8 @@ import type {
 } from "./types";
 import { defaultSnapshot, INBOX_ID } from "./seed.ts";
 import { normalizeRecurrence } from "./recurrence.ts";
-import { scheduleAutoBackup } from "./backups.ts";
+import { createSafetyBackup, scheduleAutoBackup } from "./backups.ts";
+import { CURRENT_SCHEMA_VERSION, migrateSnapshotRecord, UnsupportedSchemaVersionError } from "./migrations.ts";
 
 export interface ReminderClaim {
   task: Task;
@@ -54,6 +55,8 @@ const CORRUPT_PREFIX = SNAPSHOT_KEY + ".corrupt.";
 export interface NormalizeResult {
   snap: Snapshot;
   warnings: string[];
+  sourceVersion: number;
+  migrated: boolean;
 }
 
 function asArray(v: unknown): unknown[] { return Array.isArray(v) ? v : []; }
@@ -110,7 +113,7 @@ export function assertSnapshotImport(raw: unknown): asserts raw is Record<string
 }
 
 export function normalizeSnapshot(raw: unknown): NormalizeResult {
-  const src = (raw !== null && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const { data: src, sourceVersion, migrated } = migrateSnapshotRecord(raw);
   const warnings: string[] = [];
 
   const projects: Project[] = [];
@@ -263,7 +266,12 @@ export function normalizeSnapshot(raw: unknown): NormalizeResult {
   if (orphanProjects) warnings.push(`${orphanProjects} 个任务的原清单不存在,已移入收集箱`);
   if (droppedTags) warnings.push(`${droppedTags} 个标签引用失效,已忽略`);
 
-  return { snap: { projects, tags, tasks, filters, habits, focusRecords }, warnings };
+  return {
+    snap: { schemaVersion: CURRENT_SCHEMA_VERSION, projects, tags, tasks, filters, habits, focusRecords },
+    warnings,
+    sourceVersion,
+    migrated,
+  };
 }
 
 /* ============ localStorage 实现 ============ */
@@ -296,11 +304,14 @@ class LocalStore implements Database {
       throw new Error("读取本地数据失败");
     }
     if (raw) {
+      let result: NormalizeResult | null = null;
       try {
-        const { snap, warnings } = normalizeSnapshot(JSON.parse(raw));
-        if (warnings.length) console.warn("[Locado] 数据已自动修复:", warnings.join(";"));
-        return snap;
-      } catch {
+        result = normalizeSnapshot(JSON.parse(raw));
+      } catch (error) {
+        if (error instanceof UnsupportedSchemaVersionError) {
+          this.report("数据由更新版本的 Locado 创建，当前版本已停止写入。请升级应用后再使用。");
+          throw error;
+        }
         let protectedCopy = false;
         try { localStorage.setItem(CORRUPT_PREFIX + Date.now(), raw); protectedCopy = true; } catch { /* 保留原始主键 */ }
         if (!protectedCopy) {
@@ -308,6 +319,19 @@ class LocalStore implements Database {
           throw new Error("本地数据损坏且无法备份原文");
         }
         this.report("本地数据损坏,已另存原文并重置为示例数据。");
+      }
+      if (result) {
+        if (result.warnings.length) console.warn("[Locado] 数据已自动修复:", result.warnings.join(";"));
+        if (result.migrated) {
+          try {
+            createSafetyBackup(raw, "before-migration");
+            this.write(result.snap);
+          } catch (error) {
+            this.report("数据迁移未完成，原始数据未被替换。请先导出备份并检查存储空间。");
+            throw error;
+          }
+        }
+        return result.snap;
       }
     }
     const seed = defaultSnapshot();
