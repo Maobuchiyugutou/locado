@@ -3,6 +3,9 @@ contact_links:
   - name: Security vulnerability
     url: https://github.com/Maobuchiyugutou/locado/security/advisories/new
     about: Report security issues privately instead of opening a public issue.
-  - name: Usage and development guide
+  - name: Usage and documentation
+    url: https://github.com/Maobuchiyugutou/locado#quick-start
+    about: Start with the README, platform launchers, and data safety guidance.
+  - name: Windows + WSL development guide
     url: https://github.com/Maobuchiyugutou/locado/blob/main/docs/zh-CN.md
-    about: Check the Windows, WSL, data backup, and development instructions.
+    about: Use this only for the specialized Windows + WSL development workflow.

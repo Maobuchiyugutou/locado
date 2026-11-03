@@ -2,7 +2,16 @@ node_modules
 dist
 dist-ssr
 *.local
+*.log
+*.tsbuildinfo
 .DS_Store
+coverage/
+
+# Local data and secrets
+.env
+.env.*
+!.env.example
+locado-backup.json
 
 # Rust / Tauri
 src-tauri/target

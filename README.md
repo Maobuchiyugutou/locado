@@ -93,10 +93,12 @@ docs/                Guides, distribution plan, and screenshots
 ## Documentation and community
 
 - [Windows + WSL guide (中文)](docs/zh-CN.md)
-- [Native app and distribution status](docs/distribution-plan.md)
+- [Native app and distribution status (中文)](docs/distribution-plan.md)
+- [Planned work](https://github.com/Maobuchiyugutou/locado/issues)
 - [Contributing guide](CONTRIBUTING.md)
 - [Changelog](CHANGELOG.md)
 - [Security policy](SECURITY.md)
+- [Report a bug](https://github.com/Maobuchiyugutou/locado/issues/new?template=bug_report.yml) · [Request a feature](https://github.com/Maobuchiyugutou/locado/issues/new?template=feature_request.yml)
 
 ## License
 

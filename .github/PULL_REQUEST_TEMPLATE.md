@@ -2,6 +2,10 @@
 
 Describe the problem this pull request solves and the approach taken.
 
+## Related issue
+
+Closes #<!-- issue number -->
+
 ## Changes
 
 - <!-- Add key changes here -->

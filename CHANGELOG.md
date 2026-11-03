@@ -4,6 +4,8 @@ Notable changes to Locado are documented here. The format is based on [Keep a Ch
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-03
+
 ### Added
 
 - Natural-language Quick Add for dates, times, projects, tags, priorities, reminders, and repeat rules, with per-field corrections.
@@ -12,12 +14,13 @@ Notable changes to Locado are documented here. The format is based on [Keep a Ch
 - Tauri 2 desktop shell configuration and Linux native build checks; no native installers have been published.
 - Windows, macOS, and Linux one-command Web/PWA setup scripts with Node.js checks and automatic browser launch.
 - Public-repository documentation, application screenshot, issue forms, and pull request checklist.
-- Full Chinese README and a cross-platform native distribution plan.
+- Full Chinese README and source-distribution/native-status documentation.
 - GitHub Actions for automated tests and production builds.
 - MIT license, repository metadata, and structured development scripts.
 
 ### Changed
 
+- Reorganize bilingual documentation around quick start, source distribution, native status, and focused contribution workflows.
 - Coordinate snapshot mutations with queued writes, Web Locks when available, and fresh reads to reduce stale cross-tab overwrites.
 - Surface persistence failures and reload saved state instead of leaving unsaved edits presented as successfully stored.
 - Validate backup structure and record IDs before restore, and flush pending edits and create protection copies before JSON restore or CSV import.
@@ -28,6 +31,7 @@ Notable changes to Locado are documented here. The format is based on [Keep a Ch
 
 ### Fixed
 
+- Use Node.js 24 explicitly in WSL launchers and stop on setup failures instead of falling back to Windows npm.
 - Prevent stale pending edits from recreating tasks deleted in another tab.
 - Keep backup timestamps strictly increasing so rapid backups retain a deterministic newest-first order.
 

@@ -1,7 +1,7 @@
 {
   "name": "locado",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "A local-first task manager with habits, focus sessions, and offline PWA support",
   "license": "MIT",

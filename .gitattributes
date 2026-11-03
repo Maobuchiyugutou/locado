@@ -1,5 +1,6 @@
 # WSL 脚本必须保持 LF,Windows 启动脚本使用 CRLF。
 *.sh text eol=lf
+*.md text eol=lf
 *.mjs text eol=lf
 *.yml text eol=lf
 *.yaml text eol=lf

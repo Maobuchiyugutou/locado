@@ -1,70 +1,63 @@
-# Locado 中文使用与 WSL 指南
+# Windows + WSL 开发指南
 
-[返回完整中文 README](../README.zh-CN.md)
+[返回中文 README](../README.zh-CN.md)
 
-Locado 是一个本地优先的待办、习惯打卡与专注工具。当前版本在浏览器中运行，数据保存在浏览器 `localStorage`，无需账号或后端服务。
+普通 Windows 用户不需要 WSL，直接运行 `scripts\run-windows.cmd` 即可。本指南仅用于当前电脑只能在 WSL Ubuntu 中运行 Node.js、npm 和 Vite 的特殊开发环境。
 
-## 功能
+## 目录约定
 
-- 清单、标签、子任务、备注、优先级、提醒和置顶
-- 独立的重要性与紧急度，以及可拖拽的四象限视图
-- 今天、最近 7 天、全部、已完成、日历和自定义筛选器
-- 习惯打卡、番茄钟及关联任务
-- 浅色/深色主题、键盘操作、PWA 安装与离线运行
-- JSON 备份/恢复、滴答清单 CSV 导入
+当前流程以 `E:\Locado` 为唯一源码目录，并同步到 WSL 的 `~/Locado` 运行：
 
-## 常规开发
+- 只在 `E:\Locado` 编辑源码，不要同时修改两个目录。
+- `~/Locado` 是同步副本，其中的 `node_modules` 不参与同步。
+- 固定使用 `http://localhost:1420`，避免浏览器按 origin 隔离后出现数据“丢失”的假象。
 
-需要 Node.js 24 或更新版本。
+## 环境要求
 
-```bash
-npm ci
-npm run dev
-```
+- WSL Ubuntu
+- nvm、Node.js 24+ 和 npm
+- rsync
 
-打开 `http://localhost:1420`。
+## 一键启动
 
-```bash
-npm test          # 运行自动化测试
-npm run build     # 类型检查与生产构建
-npm run preview -- --port 1420 --strictPort
-```
+双击项目根目录的 `start-locado.cmd`。脚本会同步源码、安装依赖、构建生产版本，并打开 `http://localhost:1420/`。
 
-## Windows + WSL 一键启动
-
-当前电脑约定以 `E:\Locado` 为主源码目录，再同步到 WSL 的 `~/Locado` 运行。不要在两个目录中分别编辑。
-
-1. 在 WSL Ubuntu 中安装 nvm、Node.js 24、npm 和 rsync。
-2. 双击项目根目录的 `start-locado.cmd`。
-3. 脚本会同步、构建并打开 `http://localhost:1420/`。
-
-也可以手动执行：
+也可以在 WSL 中手动执行：
 
 ```bash
 bash /mnt/e/Locado/scripts/wsl-run.sh
 cd ~/Locado
-npm test
 npm run build
-npm run preview -- --port 1420 --strictPort
+npm run preview -- --host 127.0.0.1 --port 1420 --strictPort
 ```
 
-`wsl-dev.sh` 用于 Vite 开发服务，`wsl-serve.sh` 用于同步、构建和生产预览。
+保持终端运行，按 `Ctrl+C` 停止服务。
 
-## 数据安全与备份
+## 脚本用途
 
-- 数据只保存在当前浏览器和当前 origin 中，不会上传。
-- `localhost:1420`、`127.0.0.1:1420` 和其他端口属于不同的数据空间。
-- 重启电脑、关闭浏览器或停止本地服务不会主动清除数据。
-- 清理浏览器站点数据、换浏览器或换 origin 前，请先在“导入 / 导出”中导出 JSON 备份。
-- Service Worker 只缓存应用壳和静态资源，不缓存任务快照。
+| 文件 | 用途 |
+|---|---|
+| `start-locado.cmd` | Windows 一键构建、启动并打开浏览器 |
+| `scripts/wsl-run.sh` | 同步源码并执行 `npm ci` |
+| `scripts/wsl-dev.sh` | 在 `~/Locado` 启动 Vite 开发服务 |
+| `scripts/wsl-build.sh` | 准备 Node.js 环境、同步并构建 |
+| `scripts/wsl-serve.sh` | 同步、构建并启动生产预览 |
 
-## 参与贡献
-
-提交前请运行：
+## 验证
 
 ```bash
+cd ~/Locado
 npm test
 npm run build
 ```
 
-详见 [Contributing](../CONTRIBUTING.md)、[安全策略](../SECURITY.md) 和 [更新日志](../CHANGELOG.md)。
+## 数据与网络安全
+
+- `localhost:1420`、`127.0.0.1:1420` 和其他端口属于不同的数据空间，不要混用。
+- 清理站点数据、换浏览器或换 origin 前，先通过“导入 / 导出”保存独立 JSON 备份。
+- 开发服务只监听本机回环地址，不要为了局域网访问直接改为 `0.0.0.0`。
+- Service Worker 只缓存应用壳和静态资源，不缓存任务快照。
+
+## WSL 原生验收边界
+
+WSLg 可用于检查 Tauri 窗口和基础功能，但 WSL 缺少系统通知服务时，无法验证 Linux 桌面通知。系统通知仍需在带通知服务的真实 Linux 桌面环境复验，详见 [分发与原生应用状态](distribution-plan.md)。

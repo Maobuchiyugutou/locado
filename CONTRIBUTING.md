@@ -1,6 +1,13 @@
 # Contributing to Locado
 
-Thanks for helping improve Locado. Keep changes focused, preserve local-first behavior, and avoid adding unnecessary dependencies.
+Thanks for helping improve Locado. Preserve local-first behavior and avoid adding unnecessary dependencies.
+
+## Workflow
+
+1. Start with an [existing issue](https://github.com/Maobuchiyugutou/locado/issues), or open a feature request before making a large behavior change.
+2. Fork the repository and create a focused branch for your change.
+3. Make the change with appropriate regression coverage and documentation updates.
+4. Open a pull request, link the related issue, and complete the checklist.
 
 ## Set up
 

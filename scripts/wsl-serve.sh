@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
+set -e
 # 一键上线:同步 E:\Locado → ~/Locado,构建生产版本,并在 1420 端口提供服务。
 # 固定 1420 是为了和原来的 dev server 同源(http://localhost:1420),
 # localStorage 数据不会因为换端口而"消失"。
 export NVM_DIR="$HOME/.nvm"
 # shellcheck disable=SC1091
 . "$NVM_DIR/nvm.sh"
-nvm use default >/dev/null 2>&1
+nvm use 24 >/dev/null
 
 SRC="/mnt/e/Locado"
 DEST="$HOME/Locado"

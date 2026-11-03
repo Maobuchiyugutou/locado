@@ -92,11 +92,13 @@ docs/                使用指南、分发规划和应用截图
 
 ## 文档与社区
 
-- [Windows + WSL 使用指南](docs/zh-CN.md)
+- [Windows + WSL 开发指南](docs/zh-CN.md)
 - [原生应用与分发状态](docs/distribution-plan.md)
+- [后续任务](https://github.com/Maobuchiyugutou/locado/issues)
 - [贡献指南](CONTRIBUTING.md)
 - [更新日志](CHANGELOG.md)
 - [安全策略](SECURITY.md)
+- [报告问题](https://github.com/Maobuchiyugutou/locado/issues/new?template=bug_report.yml) · [提出功能建议](https://github.com/Maobuchiyugutou/locado/issues/new?template=feature_request.yml)
 
 ## 许可证
 
