@@ -6,6 +6,7 @@ Locado 是一个本地优先的待办工具，用于规划任务、培养习惯�
 
 [![CI](https://github.com/Maobuchiyugutou/locado/actions/workflows/ci.yml/badge.svg)](https://github.com/Maobuchiyugutou/locado/actions/workflows/ci.yml)
 [![在线 Demo](https://img.shields.io/badge/在线_Demo-打开即用-c15f3c?logo=githubpages)](https://maobuchiyugutou.github.io/locado/)
+[![Version](https://img.shields.io/github/v/tag/Maobuchiyugutou/locado?sort=semver&label=version)](https://github.com/Maobuchiyugutou/locado/tags)
 [![许可证: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Node.js 24+](https://img.shields.io/badge/node.js-24%2B-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 
