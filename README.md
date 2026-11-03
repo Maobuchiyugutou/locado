@@ -10,6 +10,10 @@ A local-first task manager for planning, habits, and focused work. Capture tasks
 
 ![Locado desktop application](docs/assets/locado-desktop.png)
 
+## Online demo
+
+[Open the online demo](https://maobuchiyugutou.github.io/locado/) to use the Web/PWA version without installing anything. Task and usage data stays in the current browser and is never uploaded; the online demo, local server, and desktop app use separate data stores.
+
 ## Features
 
 - **Natural-language Quick Add**: turn one sentence into a task with dates, times, projects, tags, priority, reminders, and recurrence. Review every parsed field before saving.
@@ -17,6 +21,7 @@ A local-first task manager for planning, habits, and focused work. Capture tasks
 - **Purposeful views**: plan with Today, Next 7 Days, calendar, custom filters, and a drag-and-drop Eisenhower matrix.
 - **Habits and focus**: track daily habits and run task-linked Pomodoro sessions that survive reloads.
 - **Local-first PWA**: work offline with light/dark themes, keyboard navigation, and no account or telemetry.
+- **On-device usage statistics**: review active days, task completion, Quick Add parsing quality, and 30-day activity using daily counts only—never task content.
 - **Portable data**: import TickTick CSV, export JSON, and restore from five rotating local backups with previews.
 
 ## Quick start

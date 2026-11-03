@@ -4,7 +4,7 @@
 
 ## 当前获取方式
 
-Locado 目前通过**源码 + 三平台启动脚本**分发。用户克隆仓库后，按照 [快速开始](../README.zh-CN.md#快速开始) 运行对应脚本即可使用 Web/PWA 生产版本。
+Locado 提供[在线 Web/PWA Demo](https://maobuchiyugutou.github.io/locado/)，并通过**源码 + 三平台启动脚本**分发。在线 Demo 无需安装；任务与统计数据仅保存在当前浏览器，不上传。用户也可以克隆仓库，按照 [快速开始](../README.zh-CN.md#快速开始) 运行对应脚本使用本地 Web/PWA 生产版本。
 
 - Windows：`scripts\run-windows.cmd`
 - macOS：`bash scripts/run-macos.sh`

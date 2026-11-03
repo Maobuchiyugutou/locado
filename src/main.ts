@@ -15,6 +15,7 @@ import { importFromTickTickCsv } from "./importers";
 import { applyQuickAddCorrections, parseTask, resolveQuickAddMetadata, type ParsedTask } from "./nlp";
 import { setupPWA } from "./pwa";
 import { nextRecurringDue, normalizeRecurrence, planRecurringToggle, recurrenceSummary } from "./recurrence";
+import { clearUsage, readUsage, recordUsage, summarizeUsage } from "./usage";
 import {
   HABIT_ICONS,
   PROJECT_COLORS,
@@ -75,6 +76,7 @@ const ICONS: Record<string, string> = {
   sync: "M8 3 4 7l4 4M4 7h16M16 21l4-4-4-4M20 17H4",
   bell: "M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9ZM10 21a2 2 0 0 0 4 0",
   pin: "M12 17v5M9 10.76V7a3 3 0 0 1 6 0v3.76M5 9h14l-2 5H7L5 9Z",
+  chart: "M4 20V10m6 10V4m6 16v-7m4 7H2",
 };
 
 function icon(name: string, className = ""): HTMLElement {
@@ -354,6 +356,7 @@ function renderSidebar(): void {
   for (const [id, ico, label] of [["habits", "flame", "习惯"], ["focus", "clock", "专注"], ["smart:completed", "check-circle", "已完成"]] as [string, string, string][]) {
     tray.append(el("button", { class: "tray-btn" + (view === id ? " active" : ""), title: label, onClick: () => { view = id; render(); } }, icon(ico)));
   }
+  tray.append(el("button", { class: "tray-btn", title: "使用统计", onClick: openUsageModal }, icon("chart")));
   tray.append(el("button", { class: "tray-btn", title: "导入 / 导出", onClick: openDataModal }, icon("sync")));
   bar.append(el("div", { class: "sidebar-foot" }, tray));
 }
@@ -569,6 +572,7 @@ async function quickAddOn(d: Date): Promise<void> {
   const t: Task = { id: uid(), projectId: INBOX_ID, title: title.trim(), note: "", priority: 0, completed: false, completedAt: null, dueDate: due.getTime(), pinned: false, tags: [], subtasks: [], createdAt: Date.now(), updatedAt: Date.now() };
   snap.tasks.push(t);
   if (!(await persist(() => db.saveTask(t)))) return;
+  recordUsage({ type: "create" });
   render();
 }
 
@@ -1191,9 +1195,11 @@ async function toggleDone(t: Task): Promise<void> {
   if (togglingTasks.has(t.id)) return;
   togglingTasks.add(t.id);
   pendingSaves.delete(t.id);
+  const completing = !t.completed;
   try {
     const plan = planRecurringToggle(snap.tasks, t.id, Date.now(), uid);
     if (!(await persist(() => db.saveTasks(plan.upserts, plan.deleteIds)))) return;
+    if (completing) recordUsage({ type: "complete" });
     if (plan.deleteIds.length) snap.tasks = snap.tasks.filter((task) => !plan.deleteIds.includes(task.id));
     for (const task of plan.upserts) {
       const i = snap.tasks.findIndex((item) => item.id === task.id);
@@ -1206,7 +1212,7 @@ async function toggleDone(t: Task): Promise<void> {
     togglingTasks.delete(t.id);
   }
 }
-async function addTask(title: string, corrected?: ParsedTask, skipDateDefault = false): Promise<void> {
+async function addTask(title: string, corrected?: ParsedTask, skipDateDefault = false, quickAddClean = true): Promise<void> {
   const raw = title.trim(); if (!raw) return;
   const parsed = corrected ?? parseTask(raw);
   const metadata = resolveQuickAddMetadata(parsed.projectName, parsed.tagNames, snap.projects, snap.tags);
@@ -1227,6 +1233,8 @@ async function addTask(title: string, corrected?: ParsedTask, skipDateDefault = 
   const visibleInCurrentView = matchView(t, view);
   snap.tasks.push(t);
   if (!(await persist(() => db.saveTask(t)))) return;
+  recordUsage({ type: "create" });
+  recordUsage({ type: "quick-add", clean: quickAddClean });
   if (t.reminderMinutesBefore != null) ensureNotifyPermission();
   render();
   const notices: string[] = [];
@@ -1513,7 +1521,10 @@ async function download(name: string, text: string): Promise<void> {
       defaultPath: name,
       filters: [{ name: "JSON", extensions: ["json"] }],
     });
-    if (path) await writeTextFile(path, text);
+    if (path) {
+      await writeTextFile(path, text);
+      recordUsage({ type: "export" });
+    }
     return;
   }
   const blob = new Blob([text], { type: "application/json" });
@@ -1521,6 +1532,7 @@ async function download(name: string, text: string): Promise<void> {
   const a = document.createElement("a");
   a.href = url; a.download = name; document.body.append(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+  recordUsage({ type: "export" });
 }
 
 async function importCsvText(text: string): Promise<{ tasks: number; projects: number; tags: number; warnings: string[] }> {
@@ -1647,6 +1659,63 @@ function openDataModal(ev?: Event): void {
   const m = modal("数据导入 / 导出", body, [], undefined, trigger);
 }
 
+function openUsageModal(ev?: Event): void {
+  const trigger = ev?.currentTarget instanceof HTMLElement ? ev.currentTarget : null;
+  const summary = summarizeUsage(readUsage());
+  const card = (value: string, label: string, detail = "") => el("div", { class: "usage-card" },
+    el("div", { class: "usage-value" }, value),
+    el("div", { class: "usage-label" }, label),
+    detail ? el("div", { class: "usage-detail" }, detail) : "");
+  const quickAddRate = summary.quickAddCleanRate == null ? "暂无数据" : `${Math.round(summary.quickAddCleanRate * 100)}%`;
+
+  const grid = el("div", { class: "usage-grid" },
+    card(String(summary.activeDays), "累计使用天数"),
+    card(String(summary.streakDays), "连续使用天数"),
+    card(String(summary.created), "创建任务"),
+    card(String(summary.completed), "完成任务"));
+
+  const weekly = el("div", { class: "usage-panel" },
+    el("div", { class: "usage-panel-title" }, summary.weeklyGoalMet ? "本周活跃目标已达成" : "本周活跃目标"),
+    el("div", { class: "usage-detail" }, `近 7 天完成 ${summary.last7.completed} 个任务，打开 ${summary.last7.openDays} 天`),
+    el("div", { class: "usage-detail" }, "目标：完成至少 3 个任务，并在至少 2 天打开"));
+
+  const quality = el("div", { class: "usage-panel" },
+    el("div", { class: "usage-row" }, el("span", {}, "Quick Add 使用次数"), el("strong", {}, String(summary.quickAdds))),
+    el("div", { class: "usage-row" }, el("span", {}, "无需修正的识别比例"), el("strong", {}, quickAddRate)),
+    el("div", { class: "usage-row" }, el("span", {}, "JSON 导出次数"), el("strong", {}, String(summary.exports))));
+
+  const chart = el("div", { class: "usage-chart", role: "img", "aria-label": "最近 30 天每天完成的任务数" });
+  const maxCompleted = Math.max(1, ...summary.activity.map((day) => day.completed));
+  for (const day of summary.activity) {
+    const height = day.completed ? Math.max(12, day.completed / maxCompleted * 100) : 3;
+    chart.append(el("div", { class: "usage-bar-slot" }, el("div", {
+      class: "usage-bar" + (day.completed ? " has-data" : ""),
+      style: `height:${height}%`,
+      title: `${day.label} · 完成 ${day.completed} 个任务`,
+      "aria-hidden": "true",
+    })));
+  }
+  const chartBlock = el("div", {},
+    chart,
+    el("div", { class: "usage-chart-labels" },
+      el("span", {}, summary.activity[0]?.label ?? ""),
+      el("span", {}, summary.activity[summary.activity.length - 1]?.label ?? "")));
+
+  const resetBtn = el("button", { class: "text-btn danger", onClick: async () => {
+    if (!(await confirmModal("清除本机使用统计？任务、清单和备份不会受影响。"))) return;
+    clearUsage();
+    m.close();
+    toast("已清除本机使用统计");
+  } }, "清除统计");
+  const body = el("div", { class: "form usage-stats" },
+    grid,
+    field2("最近 7 天", weekly),
+    field2("识别与备份", quality),
+    field2("最近 30 天完成", chartBlock),
+    el("div", { class: "hint" }, "统计从本次版本启用后开始，不包含历史数据。这里只保存每日计数，不记录任务内容；数据仅留在当前浏览器，不上传，也不会包含在任务备份中。"));
+  const m = modal("使用统计 · 仅本机", body, [resetBtn], undefined, trigger);
+}
+
 /* ============ 主题 ============ */
 function applyTheme(dark: boolean): void {
   document.documentElement.dataset.theme = dark ? "dark" : "light";
@@ -1713,7 +1782,7 @@ function elAddInput(): HTMLElement {
       e.preventDefault();
       const current = corrected();
       const skipDateDefault = ignored.has("date") || ignored.has("recurrence");
-      void addTask(input.value, current, skipDateDefault);
+      void addTask(input.value, current, skipDateDefault, ignored.size === 0);
       input.value = ""; ignored.clear(); parsed = parseTask(""); renderPreview();
     }
   });
@@ -1728,6 +1797,7 @@ async function boot(): Promise<void> {
   buildShell();
   try { applyTheme(localStorage.getItem("locado.theme") === "dark"); } catch { /* ignore */ }
   render();
+  recordUsage({ type: "open" });
   window.setInterval(tick, 1000);
   tick();
   window.addEventListener("beforeunload", () => { void flushSaves(); persistFocus(); flushAutoBackup(); });
