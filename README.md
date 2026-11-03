@@ -31,10 +31,38 @@ The Tauri 2 desktop shell is configured in `src-tauri` and reuses the existing f
 
 ## Quick start
 
-### Requirements
+### One-command setup (recommended)
 
-- Node.js 24 or newer
-- npm
+Clone the repository:
+
+```bash
+git clone https://github.com/Maobuchiyugutou/locado.git
+cd locado
+```
+
+On Windows, double-click `scripts\run-windows.cmd` or run:
+
+```bat
+scripts\run-windows.cmd
+```
+
+On macOS:
+
+```bash
+bash scripts/run-macos.sh
+```
+
+On Linux:
+
+```bash
+bash scripts/run-linux.sh
+```
+
+The scripts check for Node.js 24, installing it through winget on Windows or a user-local nvm on macOS/Linux. They then run `npm ci`, build the production app, and open [http://localhost:1420](http://localhost:1420). Keep the terminal running and press `Ctrl+C` to stop. This Web/PWA mode does not require Rust or native build dependencies.
+
+### Manual setup
+
+With Node.js 24 or newer already installed:
 
 ```bash
 npm ci
@@ -76,7 +104,7 @@ See the [完整中文 README](README.zh-CN.md), [Windows + WSL guide](docs/zh-CN
 src/                 Application, storage, parsing, and UI
 public/              PWA manifest, service worker, and icons
 tests/               Node.js regression tests
-scripts/             Windows + WSL development scripts
+scripts/             Cross-platform launchers and WSL development scripts
 docs/                Guides and application screenshots
 .github/             CI, issue forms, and pull request template
 ```

@@ -10,6 +10,7 @@ Notable changes to Locado are documented here. The format is based on [Keep a Ch
 - Daily, weekly, monthly, yearly, and after-completion recurring tasks with linked next occurrences.
 - Five rotating local backups, pre-restore protection copies, and restore previews with timestamps and task/project/tag counts.
 - Tauri 2 desktop shell configuration and Linux native build checks; no native installers have been published.
+- Windows, macOS, and Linux one-command Web/PWA setup scripts with Node.js checks and automatic browser launch.
 - Public-repository documentation, application screenshot, issue forms, and pull request checklist.
 - Full Chinese README and a cross-platform native distribution plan.
 - GitHub Actions for automated tests and production builds.

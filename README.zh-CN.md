@@ -33,13 +33,40 @@ Locado 是一个本地优先的待办工具，支持清单、标签、四象限�
 
 ## 从源码运行
 
-### 环境要求
+### 一键安装运行（推荐）
 
-- Windows、macOS 或 Linux
-- Node.js 24 或更新版本
-- npm
+先克隆仓库：
+
+```bash
+git clone https://github.com/Maobuchiyugutou/locado.git
+cd locado
+```
+
+Windows：双击 `scripts\run-windows.cmd`，或在命令行运行：
+
+```bat
+scripts\run-windows.cmd
+```
+
+macOS：
+
+```bash
+bash scripts/run-macos.sh
+```
+
+Linux：
+
+```bash
+bash scripts/run-linux.sh
+```
+
+脚本会检查 Node.js 24：Windows 使用 winget 安装，macOS/Linux 使用用户目录中的 nvm 安装。随后自动执行 `npm ci`、生产构建并打开 [http://localhost:1420](http://localhost:1420)。保持终端运行，按 `Ctrl+C` 停止服务。此模式使用 Web/PWA，不需要安装 Rust 或原生编译依赖。
 
 **普通 Windows 用户不需要 WSL。** WSL 只是当前开发电脑的特殊环境方案。
+
+### 手动运行
+
+已安装 Node.js 24 或更新版本时，也可以直接执行：
 
 ```bash
 npm ci
@@ -82,7 +109,7 @@ Locado 当前将数据快照保存在浏览器或 Tauri WebView 的 `localStorag
 src/                 应用、存储、解析与界面
 public/              PWA manifest、Service Worker 和图标
 tests/               Node.js 回归测试
-scripts/             Windows + WSL 开发脚本
+scripts/             三平台一键运行与 WSL 开发脚本
 docs/                使用指南、分发规划和应用截图
 .github/             CI、Issue 表单和 PR 模板
 ```
