@@ -2,9 +2,7 @@
 
 **English | [简体中文](README.zh-CN.md)**
 
-A local-first task manager with projects, tags, an Eisenhower matrix, habit tracking, focus sessions, and an installable offline PWA.
-
-Built with Vite and TypeScript, without a UI framework. Your data stays in your browser and can be exported at any time.
+A local-first task manager for planning, habits, and focused work. Capture tasks in natural language, organize them your way, and work offline with an installable PWA—no account, tracking, or backend required.
 
 [![CI](https://github.com/Maobuchiyugutou/locado/actions/workflows/ci.yml/badge.svg)](https://github.com/Maobuchiyugutou/locado/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -12,26 +10,16 @@ Built with Vite and TypeScript, without a UI framework. Your data stays in your 
 
 ![Locado desktop application](docs/assets/locado-desktop.png)
 
-## Highlights
+## Features
 
-- **Natural-language Quick Add**: capture dates, times, projects, tags, priorities, reminders, and repeat rules in one sentence; correct individual parsed details before creating the task.
-- **Tasks, your way**: projects, tags, subtasks, notes, priorities, reminders, pinning, and independent important/urgent classification.
-- **Recurring tasks**: daily, weekly, monthly, yearly, and after-completion rules, with the next occurrence created when the current one is completed.
-- **Useful planning views**: Today, Next 7 Days, All, Completed, calendar, custom filters, and a drag-and-drop Eisenhower matrix.
-- **Sustainable routines**: habit check-ins and a task-linked Pomodoro timer that restores running or paused sessions after a reload.
-- **Local-first and offline-capable**: no account, telemetry, or backend required. Install the PWA and keep working offline.
-- **Portable data**: JSON backup and restore, TickTick CSV import, and five rotating local backups with restore previews.
-- **Desktop-focused interface**: light and dark themes, liquid-glass styling, keyboard navigation, and accessible dialogs.
-
-**Reminder scope:** reminders are checked and delivered only while Locado is running. Closing the browser tab, PWA, or desktop window stops reminder checks; there is no background notification service.
-
-## Desktop shell status
-
-The Tauri 2 desktop shell is configured in `src-tauri` and reuses the existing frontend. Native build and per-platform acceptance work is still in progress; no Windows, macOS, or Linux installers have been published. See the [distribution plan](docs/distribution-plan.md) for the current status. The commands below run the browser/PWA version.
+- **Natural-language Quick Add**: turn one sentence into a task with dates, times, projects, tags, priority, reminders, and recurrence. Review every parsed field before saving.
+- **Flexible organization**: manage projects, subtasks, notes, pins, and recurring tasks with daily, weekly, monthly, yearly, or after-completion rules.
+- **Purposeful views**: plan with Today, Next 7 Days, calendar, custom filters, and a drag-and-drop Eisenhower matrix.
+- **Habits and focus**: track daily habits and run task-linked Pomodoro sessions that survive reloads.
+- **Local-first PWA**: work offline with light/dark themes, keyboard navigation, and no account or telemetry.
+- **Portable data**: import TickTick CSV, export JSON, and restore from five rotating local backups with previews.
 
 ## Quick start
-
-### One-command setup (recommended)
 
 Clone the repository:
 
@@ -40,88 +28,75 @@ git clone https://github.com/Maobuchiyugutou/locado.git
 cd locado
 ```
 
-On Windows, double-click `scripts\run-windows.cmd` or run:
+Run the launcher for your operating system:
+
+**Windows**
 
 ```bat
 scripts\run-windows.cmd
 ```
 
-On macOS:
+**macOS**
 
 ```bash
 bash scripts/run-macos.sh
 ```
 
-On Linux:
+**Linux**
 
 ```bash
 bash scripts/run-linux.sh
 ```
 
-The scripts check for Node.js 24, installing it through winget on Windows or a user-local nvm on macOS/Linux. They then run `npm ci`, build the production app, and open [http://localhost:1420](http://localhost:1420). Keep the terminal running and press `Ctrl+C` to stop. This Web/PWA mode does not require Rust or native build dependencies.
+The launcher checks for Node.js 24+, installing it through winget on Windows or a user-local nvm on macOS/Linux. It then builds the production app and opens [http://localhost:1420](http://localhost:1420).
 
-### Manual setup
+Keep the terminal open and press `Ctrl+C` to stop. These launchers run the Web/PWA version; Rust and native build dependencies are not required.
 
-With Node.js 24 or newer already installed:
+## Data and reminders
+
+Locado stores data in the browser or Tauri WebView's `localStorage`. Task data is never uploaded to a server.
+
+- Export an independent JSON backup regularly via **Import / Export**. The five automatic backups use the same local storage and do not replace an exported copy.
+- Keep using `http://localhost:1420`. Browser data is isolated by origin, so changing the hostname or port will use a different data store. Export before clearing site data or switching browsers.
+- Browser/PWA and desktop data are stored separately; migrate between them with JSON export and import.
+- Reminders are checked only while Locado is running. Closing the app stops reminder checks; there is no background notification service.
+
+## Development
+
+With Node.js 24 or newer installed:
 
 ```bash
 npm ci
 npm run dev
 ```
 
-Open [http://localhost:1420](http://localhost:1420).
-
-### Production build
-
-```bash
-npm run build
-npm run preview -- --port 1420 --strictPort
-```
-
-### Tests
+Open [http://localhost:1420](http://localhost:1420). To run regression tests and verify a production build:
 
 ```bash
 npm test
 npm run build
+npm run preview -- --host 127.0.0.1 --port 1420 --strictPort
 ```
-
-The test suite covers natural-language dates, CSV imports, snapshot compatibility, local storage, focus-record idempotency, and corrupted-data recovery.
-
-## Your data
-
-Locado currently stores its snapshot in browser or Tauri WebView `localStorage`. No task data is sent to a server.
-
-- Back up regularly with **Import / Export → Export JSON backup**. Automatic backups use the same local storage and do not replace an independently exported copy.
-- Locado retains the latest five local backups, including pre-restore protection copies. The restore list previews each backup's timestamp and task/project/tag counts before you confirm replacement.
-- Browser site data is isolated by origin. Keep using `http://localhost:1420` rather than switching between `localhost`, `127.0.0.1`, or different ports.
-- Clearing site data or switching browsers can remove or hide your local snapshot. Export before doing either.
-
-See the [完整中文 README](README.zh-CN.md), [Windows + WSL guide](docs/zh-CN.md), and [cross-platform distribution plan](docs/distribution-plan.md).
 
 ## Project structure
 
 ```text
-src/                 Application, storage, parsing, and UI
+src/                 Application, UI, storage, and natural-language parsing
+src-tauri/           Tauri 2 desktop shell
 public/              PWA manifest, service worker, and icons
 tests/               Node.js regression tests
 scripts/             Cross-platform launchers and WSL development scripts
-docs/                Guides and application screenshots
+docs/                Guides, distribution plan, and screenshots
 .github/             CI, issue forms, and pull request template
 ```
 
-## Roadmap
+## Documentation and community
 
-- [Cross-platform Tauri installers and release pipeline](docs/distribution-plan.md)
-- Tauri + SQLite storage adapter
-- Mobile navigation and narrow-screen layouts
-- Repeatable browser end-to-end tests
-- Additional import and export options
-
-## Community
-
+- [Windows + WSL guide (中文)](docs/zh-CN.md)
+- [Native app and distribution status](docs/distribution-plan.md)
 - [Contributing guide](CONTRIBUTING.md)
-- [Security policy](SECURITY.md)
 - [Changelog](CHANGELOG.md)
+- [Security policy](SECURITY.md)
 
 ## License
 
