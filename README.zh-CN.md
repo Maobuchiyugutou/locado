@@ -5,6 +5,7 @@
 Locado 是一个本地优先的待办工具，用于规划任务、培养习惯和专注工作。支持自然语言创建任务、灵活的整理方式和可安装的离线 PWA，无需账号、遥测或后端服务。
 
 [![CI](https://github.com/Maobuchiyugutou/locado/actions/workflows/ci.yml/badge.svg)](https://github.com/Maobuchiyugutou/locado/actions/workflows/ci.yml)
+[![在线 Demo](https://img.shields.io/badge/在线_Demo-打开即用-c15f3c?logo=githubpages)](https://maobuchiyugutou.github.io/locado/)
 [![许可证: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Node.js 24+](https://img.shields.io/badge/node.js-24%2B-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 
@@ -62,7 +63,7 @@ bash scripts/run-linux.sh
 Locado 将数据保存在浏览器或 Tauri WebView 的 `localStorage` 中，不会把任务数据上传到服务器。
 
 - 定期通过 **导入 / 导出** 单独导出 JSON 备份。5 份自动备份仍在同一本地存储中，不能替代独立导出的副本。
-- 请固定使用 `http://localhost:1420`。浏览器数据按 origin 隔离，更换主机名或端口会使用不同的数据空间；清理站点数据或更换浏览器前请先导出。
+- 本地运行时请固定使用 `http://localhost:1420`。浏览器数据按 origin 隔离，更换主机名或端口会使用不同的数据空间；清理站点数据或更换浏览器前请先导出。
 - 浏览器/PWA 与桌面端的数据空间相互独立，可通过 JSON 导出和导入迁移。
 - 提醒只在 Locado 运行时检查。关闭应用后不再检查提醒，当前不提供后台常驻通知服务。
 
