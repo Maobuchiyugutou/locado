@@ -5,6 +5,7 @@
 A local-first task manager for planning, habits, and focused work. Capture tasks in natural language, organize them your way, and work offline with an installable PWA—no account, tracking, or backend required.
 
 [![CI](https://github.com/Maobuchiyugutou/locado/actions/workflows/ci.yml/badge.svg)](https://github.com/Maobuchiyugutou/locado/actions/workflows/ci.yml)
+[![Online demo](https://img.shields.io/badge/online_demo-open_now-c15f3c?logo=githubpages)](https://maobuchiyugutou.github.io/locado/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Node.js 24+](https://img.shields.io/badge/node.js-24%2B-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 
@@ -62,7 +63,7 @@ Keep the terminal open and press `Ctrl+C` to stop. These launchers run the Web/P
 Locado stores data in the browser or Tauri WebView's `localStorage`. Task data is never uploaded to a server.
 
 - Export an independent JSON backup regularly via **Import / Export**. The five automatic backups use the same local storage and do not replace an exported copy.
-- Keep using `http://localhost:1420`. Browser data is isolated by origin, so changing the hostname or port will use a different data store. Export before clearing site data or switching browsers.
+- When running locally, keep using `http://localhost:1420`. Browser data is isolated by origin, so changing the hostname or port will use a different data store. Export before clearing site data or switching browsers.
 - Browser/PWA and desktop data are stored separately; migrate between them with JSON export and import.
 - Reminders are checked only while Locado is running. Closing the app stops reminder checks; there is no background notification service.
 
