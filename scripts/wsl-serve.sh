@@ -10,6 +10,9 @@ nvm use 24 >/dev/null
 
 SRC="/mnt/e/Locado"
 DEST="$HOME/Locado"
+echo "[Locado] 正在通过 git pull --ff-only 更新源码..."
+git -C "$SRC" pull --ff-only || exit 1
+
 mkdir -p "$DEST"
 rsync -a --delete \
   --exclude node_modules \

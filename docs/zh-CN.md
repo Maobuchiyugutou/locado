@@ -20,7 +20,7 @@
 
 ## 一键启动
 
-双击项目根目录的 `start-locado.cmd`。脚本会同步源码、安装依赖、构建生产版本，并打开 `http://localhost:1420/`。
+双击项目根目录的 `start-locado.cmd`。脚本会先执行 `git pull --ff-only` 更新源码，再同步到 WSL、安装依赖、构建生产版本，并打开 `http://localhost:1420/`。如果无法快进更新，脚本会停止，不会继续构建旧代码。
 
 也可以在 WSL 中手动执行：
 

@@ -3,6 +3,10 @@ setlocal EnableExtensions DisableDelayedExpansion
 title Locado Setup
 cd /d "%~dp0\.." || exit /b 1
 
+echo [Locado] Updating source with git pull --ff-only...
+git pull --ff-only
+if errorlevel 1 goto fail
+
 echo [Locado] Checking Node.js 24 or newer...
 where node >nul 2>&1
 if errorlevel 1 goto install_node

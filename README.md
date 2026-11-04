@@ -71,7 +71,7 @@ Locado stores data in the browser or Tauri WebView's `localStorage`. Task data i
 ## Updates and data compatibility
 
 - The online demo and installed PWA check for updates on launch, when returning to the foreground, and every 30 minutes. Choose **Update now** to save pending edits before reloading. Older versions without the update prompt need one manual refresh first.
-- When running from source, run `git pull` and restart the launcher, keeping `http://localhost:1420` unchanged.
+- When running from source, restart the launcher. It runs `git pull --ff-only` before installing dependencies and building. If a fast-forward update is not possible—for example, because local changes conflict—it stops instead of overwriting your work. Keep using `http://localhost:1420`.
 - Snapshots include a `schemaVersion`. Locado creates a protected backup before migration and stops writing when data comes from a newer version, preventing an older app from overwriting newer history.
 
 ## Development
