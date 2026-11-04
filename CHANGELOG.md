@@ -15,6 +15,10 @@ Notable changes to Locado are documented here. The format is based on [Keep a Ch
 
 - Launcher scripts now run `git pull --ff-only` before building and stop on update failures instead of building stale source.
 
+### Fixed
+
+- The Windows WSL launcher now always updates and builds before reusing a preview, verifies the served build ID, and refuses to open a different service on port 1420.
+
 ## [0.2.0] - 2026-11-03
 
 ### Added
