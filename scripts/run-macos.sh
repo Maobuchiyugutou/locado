@@ -5,6 +5,9 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 APP_URL="http://localhost:1420"
 
+echo "[Locado] Updating source with git pull --ff-only..."
+git pull --ff-only
+
 node_is_ready() {
   command -v node >/dev/null 2>&1 \
     && node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 24 ? 0 : 1)'
