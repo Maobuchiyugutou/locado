@@ -10,6 +10,7 @@ Notable changes to Locado are documented here. The format is based on [Keep a Ch
 - Local-only usage statistics for active days, task creation and completion, Quick Add corrections, exports, and recent activity; no task content or telemetry is collected.
 - Versioned snapshot migrations with pre-migration protection backups and write protection for data created by newer app versions.
 - Build metadata and PWA update checks with a save-before-reload update prompt.
+- Chromium end-to-end coverage for cold-offline installs, migrations, update reloads, backup restore protection, and close-time save flushing.
 
 ### Changed
 
@@ -18,6 +19,8 @@ Notable changes to Locado are documented here. The format is based on [Keep a Ch
 ### Fixed
 
 - The Windows WSL launcher now always updates and builds before reusing a preview, verifies the served build ID, and refuses to open a different service on port 1420.
+- Static PWA shell requests now match same-origin pre-cached assets across `Vary: Origin` differences, preventing a cold install from failing its first offline load.
+- Pending edits now flush when the page is hidden and warn before closing with active saves; snapshot replacement creates its protection backup inside the same write lock.
 
 ## [0.2.0] - 2026-11-03
 

@@ -91,6 +91,13 @@ npm run build
 npm run preview -- --host 127.0.0.1 --port 1420 --strictPort
 ```
 
+Chromium end-to-end tests manage the preview server automatically:
+
+```bash
+npx playwright install --with-deps chromium
+npm run test:e2e
+```
+
 ## Project structure
 
 ```text
@@ -98,6 +105,7 @@ src/                 Application, UI, storage, and natural-language parsing
 src-tauri/           Tauri 2 desktop shell
 public/              PWA manifest, service worker, and icons
 tests/               Node.js regression tests
+e2e/                 Chromium browser and PWA regression tests
 scripts/             Cross-platform launchers and WSL development scripts
 docs/                Guides, distribution plan, and screenshots
 .github/             CI, issue forms, and pull request template
