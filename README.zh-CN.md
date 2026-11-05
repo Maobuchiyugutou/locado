@@ -91,6 +91,13 @@ npm run build
 npm run preview -- --host 127.0.0.1 --port 1420 --strictPort
 ```
 
+Chromium 端到端测试会自动管理预览服务：
+
+```bash
+npx playwright install --with-deps chromium
+npm run test:e2e
+```
+
 ## 项目结构
 
 ```text
@@ -98,6 +105,7 @@ src/                 应用、界面、存储与自然语言解析
 src-tauri/           Tauri 2 桌面壳
 public/              PWA manifest、Service Worker 和图标
 tests/               Node.js 回归测试
+e2e/                 Chromium 浏览器与 PWA 回归测试
 scripts/             三平台启动与 WSL 开发脚本
 docs/                使用指南、分发规划和应用截图
 .github/             CI、Issue 表单和 PR 模板

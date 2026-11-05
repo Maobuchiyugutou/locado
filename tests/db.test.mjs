@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { assertSnapshotImport, createLocalStore, normalizeSnapshot, onStorageError, SNAPSHOT_KEY } from "../src/db.ts";
-import { flushAutoBackup, listBackups } from "../src/backups.ts";
+import { BACKUP_PREFIX, flushAutoBackup, listBackups, readBackupSnapshot } from "../src/backups.ts";
 
 class MemoryStorage {
   constructor() { this.data = new Map(); this.failPrefix = null; this.readFailPrefix = null; }
@@ -179,6 +179,43 @@ test("写入失败会 reject 且不污染磁盘或缓存", async () => {
   storage.failPrefix = null;
   const cached = await db.load();
   assert.equal(cached.tasks[0].title, snap.tasks[0].title);
+});
+
+test("替换快照时保护备份包含磁盘上的最新原文", async () => {
+  flushAutoBackup();
+  const storage = new MemoryStorage();
+  globalThis.localStorage = storage;
+  onStorageError(() => {});
+  const a = createLocalStore();
+  const b = createLocalStore();
+  const stale = await a.load();
+  await b.load();
+  await b.saveTask(taskFrom(stale, "other-tab", "其它标签页的新任务"));
+  const latestRaw = storage.getItem(SNAPSHOT_KEY);
+  const restored = structuredClone(stale);
+  restored.tasks = [taskFrom(stale, "restored", "恢复任务")];
+  await a.replaceAll(restored);
+
+  const backup = listBackups().find((item) => item.valid && item.reason === "before-restore");
+  assert.ok(backup, "替换前必须创建保护备份");
+  assert.deepEqual(readBackupSnapshot(backup.key).data.tasks, JSON.parse(latestRaw).tasks);
+  const finalSnap = await a.reload();
+  assert.deepEqual(finalSnap.tasks.map((task) => task.id), ["restored"]);
+});
+
+test("恢复保护备份失败时不替换主快照", async () => {
+  flushAutoBackup();
+  const storage = new MemoryStorage();
+  globalThis.localStorage = storage;
+  onStorageError(() => {});
+  const db = createLocalStore();
+  const snap = await db.load();
+  const originalRaw = storage.getItem(SNAPSHOT_KEY);
+  const restored = structuredClone(snap);
+  restored.tasks = [taskFrom(snap, "must-not-write")];
+  storage.failPrefix = BACKUP_PREFIX;
+  await assert.rejects(db.replaceAll(restored));
+  assert.equal(storage.getItem(SNAPSHOT_KEY), originalRaw);
 });
 
 test("损坏原文副本写入失败时保留原始主键", async () => {

@@ -30,6 +30,12 @@ jobs:
       - name: Check types and build production assets
         run: npm run build
 
+      - name: Install Chromium for browser tests
+        run: npx playwright install --with-deps chromium
+
+      - name: Run browser regression tests
+        run: npm run test:e2e
+
       - name: Install Tauri Linux dependencies
         run: |
           sudo apt-get update

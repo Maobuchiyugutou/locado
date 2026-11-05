@@ -391,7 +391,10 @@ class LocalStore implements Database {
   }
   async replaceAll(next: Snapshot): Promise<void> {
     const replacement = cloneSnapshot(next);
-    return this.mutate((snapshot) => { Object.assign(snapshot, replacement); });
+    return this.mutate((snapshot) => {
+      createSafetyBackup(JSON.stringify(snapshot));
+      Object.assign(snapshot, replacement);
+    });
   }
 
   async saveProject(p: Project): Promise<void> {

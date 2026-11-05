@@ -1,6 +1,6 @@
 // 离线应用壳:HTML 网络优先(便于升级),静态资源缓存优先(带 hash 的构建产物可长期复用)。
 // 只处理同源 GET;任务数据在 localStorage,不经过 Service Worker。
-const CACHE = "locado-shell-v5";
+const CACHE = "locado-shell-v6";
 const BASE = new URL("./", self.location.href).pathname;
 const INDEX = BASE + "index.html";
 const SHELL = [
@@ -88,8 +88,11 @@ self.addEventListener("fetch", (event) => {
   }
 
   // JS/CSS/图标:缓存优先;新 hash 资源首次在线加载后也会进入缓存。
+  // 预缓存请求不带 Origin,而带 crossorigin 的构建资源请求会带 Origin;
+  // Vite 等静态服务器返回 Vary: Origin 时,忽略该差异才能命中同 URL 的预缓存。
+  // 前面已限制同源,这里只复用静态应用壳,不处理任务或用户数据。
   event.respondWith((async () => {
-    const cached = await caches.match(request);
+    const cached = await caches.match(request, { ignoreVary: true });
     if (cached) return cached;
     try {
       const response = await fetch(request);

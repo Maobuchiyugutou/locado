@@ -7,7 +7,7 @@ import {
   requestPermission as requestNativeNotificationPermission,
   sendNotification,
 } from "@tauri-apps/plugin-notification";
-import { createSafetyBackup, flushAutoBackup, listBackups, onBackupError, readBackupSnapshot } from "./backups";
+import { flushAutoBackup, listBackups, onBackupError, readBackupSnapshot } from "./backups";
 import { assertSnapshotImport, getDB, normalizeSnapshot, onStorageError, SNAPSHOT_KEY, uid } from "./db";
 import { INBOX_ID } from "./seed";
 import { FOCUS_STORAGE_KEY, focusRecordId, idleFocus, parseFocusState, serializeFocusState, type FocusState } from "./focus";
@@ -1160,12 +1160,20 @@ async function recoverPersistence(): Promise<void> {
   render();
 }
 
+let activePersists = 0;
 async function persist(operation: () => Promise<unknown>): Promise<boolean> {
+  activePersists += 1;
   try { await operation(); return true; }
   catch {
     await recoverPersistence();
     return false;
+  } finally {
+    activePersists -= 1;
   }
+}
+
+function hasPendingPersistence(): boolean {
+  return pendingSaves.size > 0 || activePersists > 0;
 }
 
 async function flushSaves(): Promise<boolean> {
@@ -1176,6 +1184,12 @@ async function flushSaves(): Promise<boolean> {
   return persist(async () => {
     for (const task of edits) await db.updateTask(task);
   });
+}
+
+function flushPersistence(): void {
+  void flushSaves();
+  persistFocus();
+  flushAutoBackup();
 }
 
 function queueSave(t: Task): void {
@@ -1541,7 +1555,6 @@ async function importCsvText(text: string): Promise<{ tasks: number; projects: n
   const warnings: string[] = [];
   if (!(await flushSaves())) throw new Error("当前修改未保存，已取消导入");
   snap = await db.reload();
-  createSafetyBackup(JSON.stringify(snap));
 
   // 同名清单/标签复用已有的,避免重复导入产生一堆副本。
   const projByName = new Map(snap.projects.map((p) => [p.name, p.id] as [string, string]));
@@ -1583,8 +1596,6 @@ async function restoreWithProtection(data: Record<string, unknown>): Promise<{ s
   assertSnapshotImport(data);
   const { snap: restored, warnings } = normalizeSnapshot(data);
   if (!(await flushSaves())) throw new Error("当前修改未保存，已取消恢复");
-  snap = await db.reload();
-  createSafetyBackup(JSON.stringify(snap));
   if (!(await persist(() => db.replaceAll(restored)))) throw new Error("恢复未保存，已保留原数据");
   closeDetail(false);
   snap = restored;
@@ -1836,7 +1847,17 @@ async function boot(): Promise<void> {
   recordUsage({ type: "open" });
   window.setInterval(tick, 1000);
   tick();
-  window.addEventListener("beforeunload", () => { void flushSaves(); persistFocus(); flushAutoBackup(); });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") flushPersistence();
+  });
+  window.addEventListener("pagehide", flushPersistence);
+  window.addEventListener("beforeunload", (event) => {
+    flushPersistence();
+    if (hasPendingPersistence()) {
+      event.preventDefault();
+      event.returnValue = "";
+    }
+  });
 
   // 跨标签页只刷新界面;未落盘编辑仍由 updateTask 在写锁内合并,
   // 已被其它标签页删除的任务直接丢弃,不得重新插回快照。

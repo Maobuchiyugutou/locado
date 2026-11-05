@@ -6,6 +6,8 @@ dist-ssr
 *.tsbuildinfo
 .DS_Store
 coverage/
+test-results/
+playwright-report/
 
 # Local data and secrets
 .env
