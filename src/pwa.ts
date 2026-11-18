@@ -7,14 +7,14 @@ export function setupPWA(onUpdate: () => void = () => {}): void {
 
   if (import.meta.env.DEV) {
     void navigator.serviceWorker.getRegistrations().then((registrations) => {
-      for (const registration of registrations) void registration.unregister();
-    });
+      for (const registration of registrations) void registration.unregister().catch(() => {});
+    }).catch(() => {});
     if ("caches" in window) {
       void caches.keys().then((keys) => {
         for (const key of keys) {
-          if (key.startsWith("locado-shell-")) void caches.delete(key);
+          if (key.startsWith("locado-shell-")) void caches.delete(key).catch(() => {});
         }
-      });
+      }).catch(() => {});
     }
     return;
   }

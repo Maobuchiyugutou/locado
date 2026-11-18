@@ -626,17 +626,11 @@ class LocalStore implements Database {
   }
 }
 
-// 预留:Tauri/SQLite 实现(装好工具链接入后再填充 invoke 调用)。
-function isTauri(): boolean {
-  return typeof (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ !== "undefined";
-}
-
 export function createLocalStore(): Database { return new LocalStore(); }
 
 let instance: Database | null = null;
 export function getDB(): Database {
   if (instance) return instance;
-  void isTauri;
   instance = createLocalStore();
   return instance;
 }

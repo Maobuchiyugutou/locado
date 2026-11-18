@@ -4,7 +4,7 @@
 
 Locado 是一个本地优先的待办工具，用于规划任务、培养习惯和专注工作。支持自然语言创建任务、灵活的整理方式和可安装的离线 PWA，无需账号、遥测或后端服务。
 
-[![CI](https://github.com/Maobuchiyugutou/locado/actions/workflows/ci.yml/badge.svg)](https://github.com/Maobuchiyugutou/locado/actions/workflows/ci.yml)
+[![CI](https://github.com/Maobuchiyugutou/locado/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Maobuchiyugutou/locado/actions/workflows/ci.yml)
 [![在线 Demo](https://img.shields.io/badge/在线_Demo-打开即用-c15f3c?logo=githubpages)](https://maobuchiyugutou.github.io/locado/)
 [![Version](https://img.shields.io/github/v/tag/Maobuchiyugutou/locado?sort=semver&label=version)](https://github.com/Maobuchiyugutou/locado/tags)
 [![许可证: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)

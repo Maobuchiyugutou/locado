@@ -92,14 +92,15 @@ let lastBackupCreatedAt = 0;
 
 export function createBackup(raw: string, reason: BackupReason): BackupWriteResult {
   snapshotFromRaw(raw);
+  const backups = listBackups();
   if (reason === "auto") {
-    const latest = listBackups().find((item) => item.valid);
+    const latest = backups.find((item) => item.valid);
     if (latest && readRecord(latest.key).record.raw === raw) {
       return { key: latest.key, createdAt: latest.createdAt, duplicate: true };
     }
   }
 
-  const latestCreatedAt = listBackups().reduce((latest, backup) => Math.max(latest, backup.createdAt), 0);
+  const latestCreatedAt = backups.reduce((latest, backup) => Math.max(latest, backup.createdAt), 0);
   const createdAt = Math.max(Date.now(), lastBackupCreatedAt + 1, latestCreatedAt + 1);
   lastBackupCreatedAt = createdAt;
   const key = `${BACKUP_PREFIX}${createdAt}.${Math.random().toString(36).slice(2, 9)}`;

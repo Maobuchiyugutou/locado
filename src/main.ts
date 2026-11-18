@@ -16,6 +16,7 @@ import { applyQuickAddCorrections, parseTask, resolveQuickAddMetadata, type Pars
 import { setupPWA } from "./pwa";
 import { nextRecurringDue, normalizeRecurrence, planRecurringToggle, recurrenceSummary } from "./recurrence";
 import { clearUsage, readUsage, recordUsage, summarizeUsage } from "./usage";
+import { isOverdue, matchesRule, matchView as matchViewWithFilters, sortTasks, startOfToday } from "./view-rules";
 import { CURRENT_SCHEMA_VERSION, UnsupportedSchemaVersionError } from "./migrations";
 import {
   HABIT_ICONS,
@@ -181,7 +182,6 @@ function selectControl(options: SelectOption[], initial: string, onChange: (valu
 }
 
 const DAY = 86400000;
-function startOfToday(offset = 0): number { const d = new Date(); d.setDate(d.getDate() + offset); d.setHours(0, 0, 0, 0); return d.getTime(); }
 function firstOfMonth(d: Date): Date { return new Date(d.getFullYear(), d.getMonth(), 1); }
 function dayKey(d: Date): string { return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`; }
 function toDateInput(ts: number | null): string {
@@ -205,10 +205,6 @@ function dueLabel(ts: number): string {
   const d = new Date(ts);
   return `${d.getMonth() + 1}月${d.getDate()}日`;
 }
-function isOverdue(ts: number): boolean {
-  const day = new Date(ts); day.setHours(0, 0, 0, 0);
-  return day.getTime() < startOfToday();
-}
 function fmtTime(ts: number): string { const d = new Date(ts); const p = (n: number) => String(n).padStart(2, "0"); return `${p(d.getHours())}:${p(d.getMinutes())}`; }
 function remindLabel(min: number): string { if (min === 0) return "准时"; if (min % 1440 === 0) return `提前${min / 1440}天`; if (min % 60 === 0) return `提前${min / 60}小时`; return `提前${min}分`; }
 
@@ -231,31 +227,7 @@ function isImportant(t: Task): boolean { return t.important ?? (t.priority === 5
 function isUrgent(t: Task): boolean { return t.urgent ?? (t.priority === 5 || t.priority === 1); }
 let dragTaskId: string | null = null;
 
-function matchesRule(t: Task, r: Filter["rule"]): boolean {
-  if (r.projectIds.length && !r.projectIds.includes(t.projectId)) return false;
-  if (r.tagIds.length && !r.tagIds.some((id) => t.tags.includes(id))) return false;
-  if (r.priorities.length && !r.priorities.includes(t.priority)) return false;
-  if (r.due === "overdue" && !(t.dueDate != null && isOverdue(t.dueDate))) return false;
-  if (r.due === "today" && !(t.dueDate != null && t.dueDate < startOfToday(1))) return false;
-  if (r.due === "next7" && !(t.dueDate != null && t.dueDate < startOfToday(7))) return false;
-  if (r.due === "nodate" && t.dueDate != null) return false;
-  return true;
-}
-
-function matchView(t: Task, v: string): boolean {
-  if (v === "smart:completed") return t.completed;
-  if (t.completed) return false;
-  if (v === "smart:all") return true;
-  if (v === "smart:today") return t.dueDate != null && t.dueDate < startOfToday(1);
-  if (v === "smart:next7") return t.dueDate != null && t.dueDate < startOfToday(7);
-  if (v.startsWith("project:")) return t.projectId === v.slice(8);
-  if (v.startsWith("tag:")) return t.tags.includes(v.slice(4));
-  if (v.startsWith("filter:")) {
-    const f = snap.filters.find((x) => x.id === v.slice(7));
-    return f ? matchesRule(t, f.rule) : false;
-  }
-  return false;
-}
+function matchView(t: Task, v: string): boolean { return matchViewWithFilters(t, v, snap.filters); }
 
 function activeCount(v: string): number {
   return snap.tasks.filter((t) => !t.completed && matchView(t, v)).length;
@@ -290,14 +262,6 @@ function viewOrder(v: string): string[] {
     orderMemo.set(v, ids);
   }
   return orderMemo.get(v)!;
-}
-
-function sortTasks(a: Task, b: Task): number {
-  if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
-  if (a.priority !== b.priority) return b.priority - a.priority;
-  const ad = a.dueDate ?? Infinity, bd = b.dueDate ?? Infinity;
-  if (ad !== bd) return ad - bd;
-  return a.createdAt - b.createdAt;
 }
 
 function sortForView(v: string, items: Task[]): Task[] {
@@ -968,7 +932,7 @@ function renderFocus(list: HTMLElement): void {
   list.append(inner);
 }
 
-/* ============ 详情抽屉 ============ */
+/* ============ 任务详情 ============ */
 let detailState: { id: string; bodyEl: HTMLElement; close: () => void } | null = null;
 
 function defaultRecurrence(kind: RecurrenceRule["kind"], dueDate: number | null): RecurrenceRule {
@@ -1067,23 +1031,23 @@ function detailContent(t: Task, id: string): HTMLElement {
   const title = el("textarea", { class: "d-title", rows: "1", placeholder: "任务标题" }) as HTMLTextAreaElement;
   title.value = t.title;
   const autosize = () => { title.style.height = "auto"; title.style.height = title.scrollHeight + "px"; };
-  title.addEventListener("input", () => { t.title = title.value; t.updatedAt = Date.now(); queueSave(t); });
+  title.addEventListener("input", () => { t.title = title.value; queueSave(t); });
   title.addEventListener("blur", flushSaves);
   setTimeout(autosize, 0);
 
   const note = el("textarea", { class: "d-note", placeholder: "备注…" }) as HTMLTextAreaElement;
   note.value = t.note;
-  note.addEventListener("input", () => { t.note = note.value; t.updatedAt = Date.now(); queueSave(t); });
+  note.addEventListener("input", () => { t.note = note.value; queueSave(t); });
   note.addEventListener("blur", flushSaves);
 
   const prioSeg = el("div", { class: "seg" });
   ([[5, "高"], [3, "中"], [1, "低"], [0, "无"]] as [Priority, string][]).forEach(([p, lbl]) => {
-    prioSeg.append(el("button", { class: `p${p}` + (t.priority === p ? ` on p${p}` : ""), onClick: () => { t.priority = p; t.updatedAt = Date.now(); save(t); openDetail(id); } }, lbl));
+    prioSeg.append(el("button", { class: `p${p}` + (t.priority === p ? ` on p${p}` : ""), onClick: () => { t.priority = p; save(t); openDetail(id); } }, lbl));
   });
   const quadRow = el("div", { class: "chk-row" });
   quadRow.append(
-    toggleChip("重要", isImportant(t), (v) => { t.important = v; t.updatedAt = Date.now(); save(t); }),
-    toggleChip("紧急", isUrgent(t), (v) => { t.urgent = v; t.updatedAt = Date.now(); save(t); }),
+    toggleChip("重要", isImportant(t), (v) => { t.important = v; save(t); }),
+    toggleChip("紧急", isUrgent(t), (v) => { t.urgent = v; save(t); }),
   );
 
   const date = el("input", { class: "date-input", type: "date", value: toDateInput(t.dueDate) }) as HTMLInputElement;
@@ -1092,25 +1056,25 @@ function detailContent(t: Task, id: string): HTMLElement {
     const base = fromDateInput(date.value);
     if (base != null && t.hasTime && t.dueDate != null) { const d = new Date(t.dueDate); const nd = new Date(base); nd.setHours(d.getHours(), d.getMinutes(), 0, 0); t.dueDate = nd.getTime(); }
     else t.dueDate = base;
-    t.reminded = false; t.updatedAt = Date.now(); save(t);
+    t.reminded = false; save(t);
   });
-  time.addEventListener("change", () => { applyTime(t, time.value); t.reminded = false; t.updatedAt = Date.now(); save(t); openDetail(id); });
+  time.addEventListener("change", () => { applyTime(t, time.value); t.reminded = false; save(t); openDetail(id); });
   const remindSel = selectControl(
     [["", "无提醒"], ["0", "准时"], ["5", "提前 5 分钟"], ["15", "提前 15 分钟"], ["30", "提前 30 分钟"], ["60", "提前 1 小时"], ["1440", "提前 1 天"]].map(([v, l]) => ({ value: v, label: l })),
     String(t.reminderMinutesBefore ?? ""),
-    (v) => { t.reminderMinutesBefore = v === "" ? null : Number(v); t.reminded = false; t.updatedAt = Date.now(); if (t.reminderMinutesBefore != null) ensureNotifyPermission(); save(t); },
+    (v) => { t.reminderMinutesBefore = v === "" ? null : Number(v); t.reminded = false; if (t.reminderMinutesBefore != null) ensureNotifyPermission(); save(t); },
   );
 
   const sel = selectControl(
     snap.projects.map((p) => ({ value: p.id, label: p.name })),
     t.projectId,
-    (v) => { t.projectId = v; t.updatedAt = Date.now(); save(t); },
+    (v) => { t.projectId = v; save(t); },
   );
 
   const tagWrap = el("div", { class: "tag-pick" });
   for (const tag of snap.tags) {
     const on = t.tags.includes(tag.id);
-    tagWrap.append(el("button", { class: on ? "on" : "", style: on ? `background:${tag.color}` : "", onClick: () => { t.tags = on ? t.tags.filter((x) => x !== tag.id) : [...t.tags, tag.id]; t.updatedAt = Date.now(); save(t); openDetail(id); } }, tag.name));
+    tagWrap.append(el("button", { class: on ? "on" : "", style: on ? `background:${tag.color}` : "", onClick: () => { t.tags = on ? t.tags.filter((x) => x !== tag.id) : [...t.tags, tag.id]; save(t); openDetail(id); } }, tag.name));
   }
 
   const subWrap = el("div", {});
@@ -1125,7 +1089,7 @@ function detailContent(t: Task, id: string): HTMLElement {
   });
   const addSub = el("button", { class: "sub-add", onClick: () => { t.subtasks.push({ id: uid(), title: "", completed: false }); save(t); openDetail(id); } }, el("span", {}, "＋"), el("span", {}, "添加子任务"));
 
-  const pinBtn = el("button", { class: "text-btn", onClick: () => { t.pinned = !t.pinned; t.updatedAt = Date.now(); save(t); openDetail(id); } }, t.pinned ? "已置顶" : "置顶");
+  const pinBtn = el("button", { class: "text-btn", onClick: () => { t.pinned = !t.pinned; save(t); openDetail(id); } }, t.pinned ? "已置顶" : "置顶");
   const delBtn = el("button", { class: "text-btn danger", onClick: () => removeTask(t.id) }, "删除任务");
 
   wrap.append(
@@ -1478,9 +1442,6 @@ function labelControl(label: string, control: Node): HTMLElement {
   }
   return el("div", { class: "field" }, el("div", { class: "flabel" }, label), control);
 }
-function field2(label: string, control: Node): HTMLElement {
-  return labelControl(label, control);
-}
 function toggleChip(label: string, on: boolean, cb: (v: boolean) => void): HTMLElement {
   let state = on;
   const b = el("button", {
@@ -1527,9 +1488,9 @@ function openFilterEditor(existing?: Filter): void {
   );
 
   const body = el("div", { class: "form" },
-    field2("名称", nameInp), field2("颜色", colorRow), field2("优先级(满足其一)", prioRow),
-    snap.tags.length ? field2("标签(含其一)", tagRow) : el("div"),
-    field2("清单(属其一)", projRow), field2("日期", dueSel.el));
+    field("名称", nameInp), field("颜色", colorRow), field("优先级(满足其一)", prioRow),
+    snap.tags.length ? field("标签(含其一)", tagRow) : el("div"),
+    field("清单(属其一)", projRow), field("日期", dueSel.el));
 
   const saveBtn = el("button", { class: "btn-primary", onClick: async () => {
     const f: Filter = { id: existing ? existing.id : uid(), name: nameInp.value.trim() || "未命名筛选器", color, rule: { projectIds: [...projSet], tagIds: [...tagSet], priorities: [...prios], due: dueSel.getValue() as DueFilter } };
@@ -1684,10 +1645,10 @@ function openDataModal(ev?: Event): void {
   });
 
   const body = el("div", { class: "form" },
-    field2("备份", el("div", {}, exportBtn)),
-    field2("自动备份（最多 5 份）", backupList),
-    field2("导入 Locado 备份(.json)", jsonInp),
-    field2("从滴答清单导入(.csv)", csvInp),
+    field("备份", el("div", {}, exportBtn)),
+    field("自动备份（最多 5 份）", backupList),
+    field("导入 Locado 备份(.json)", jsonInp),
+    field("从滴答清单导入(.csv)", csvInp),
     el("div", { class: "hint" }, "滴答导出方法:滴答清单 → 设置 → 备份与导出 → 导出,得到 CSV 后在此选择。导入为追加,不会覆盖现有任务。"));
   const m = modal("数据导入 / 导出", body, [], undefined, trigger);
 }
@@ -1742,9 +1703,9 @@ function openUsageModal(ev?: Event): void {
   } }, "清除统计");
   const body = el("div", { class: "form usage-stats" },
     grid,
-    field2("最近 7 天", weekly),
-    field2("识别与备份", quality),
-    field2("最近 30 天完成", chartBlock),
+    field("最近 7 天", weekly),
+    field("识别与备份", quality),
+    field("最近 30 天完成", chartBlock),
     el("div", { class: "hint" }, "统计从本次版本启用后开始，不包含历史数据。这里只保存每日计数，不记录任务内容；数据仅留在当前浏览器，不上传，也不会包含在任务备份中。"));
   const m = modal("使用统计 · 仅本机", body, [resetBtn], undefined, trigger);
 }
