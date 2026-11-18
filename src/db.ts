@@ -25,6 +25,10 @@ export interface ReminderClaim {
   notify: boolean;
 }
 
+export interface TaskSaveOptions {
+  restore?: boolean;
+}
+
 export interface Database {
   load(): Promise<Snapshot>;
   reload(): Promise<Snapshot>;
@@ -38,9 +42,9 @@ export interface Database {
   saveHabit(h: Habit): Promise<void>;
   deleteHabit(id: string): Promise<void>;
   saveFocusRecord(r: FocusRecord): Promise<void>;
-  saveTask(t: Task): Promise<void>;
+  saveTask(t: Task, options?: TaskSaveOptions): Promise<void>;
   updateTask(t: Task): Promise<void>;
-  saveTasks(upserts: Task[], deleteIds?: string[]): Promise<void>;
+  saveTasks(upserts: Task[], deleteIds?: string[], options?: TaskSaveOptions): Promise<void>;
   deleteTask(id: string): Promise<void>;
   claimReminder(id: string, at: number, now: number): Promise<ReminderClaim | null>;
 }
@@ -63,6 +67,9 @@ function asArray(v: unknown): unknown[] { return Array.isArray(v) ? v : []; }
 function asString(v: unknown, def = ""): string { return typeof v === "string" ? v : def; }
 function asNumber(v: unknown, def: number): number { return typeof v === "number" && Number.isFinite(v) ? v : def; }
 function asBool(v: unknown, def = false): boolean { return typeof v === "boolean" ? v : def; }
+function asColor(v: unknown, def: string): string {
+  return typeof v === "string" && /^#[0-9a-fA-F]{6}$/.test(v) ? v : def;
+}
 function asTime(v: unknown): number | null {
   if (typeof v === "number" && Number.isFinite(v)) return v;
   if (typeof v === "string" && v.trim()) { const t = Date.parse(v); return Number.isNaN(t) ? null : t; }
@@ -127,7 +134,7 @@ export function normalizeSnapshot(raw: unknown): NormalizeResult {
     projects.push({
       id,
       name: asString(p.name, "未命名清单").trim() || "未命名清单",
-      color: asString(p.color, "#6e7681"),
+      color: asColor(p.color, "#6e7681"),
       sortOrder: asNumber(p.sortOrder, projects.length),
       createdAt: asNumber(p.createdAt, Date.now()),
     });
@@ -146,7 +153,7 @@ export function normalizeSnapshot(raw: unknown): NormalizeResult {
     const id = asString(t.id).trim() || uid();
     if (tagIds.has(id)) continue;
     tagIds.add(id);
-    tags.push({ id, name: asString(t.name, "未命名标签").trim() || "未命名标签", color: asString(t.color, "#6e7681") });
+    tags.push({ id, name: asString(t.name, "未命名标签").trim() || "未命名标签", color: asColor(t.color, "#6e7681") });
   }
 
   const filters: Filter[] = [];
@@ -161,7 +168,7 @@ export function normalizeSnapshot(raw: unknown): NormalizeResult {
     filters.push({
       id,
       name: asString(f.name, "未命名筛选器").trim() || "未命名筛选器",
-      color: asString(f.color, "#6e7681"),
+      color: asColor(f.color, "#6e7681"),
       rule: {
         projectIds: asArray(rule.projectIds).filter((x): x is string => typeof x === "string" && projectIds.has(x)),
         tagIds: asArray(rule.tagIds).filter((x): x is string => typeof x === "string" && tagIds.has(x)),
@@ -188,7 +195,7 @@ export function normalizeSnapshot(raw: unknown): NormalizeResult {
       id,
       name: asString(h.name, "未命名习惯").trim() || "未命名习惯",
       icon: asString(h.icon, "🎯"),
-      color: asString(h.color, "#0091ff"),
+      color: asColor(h.color, "#0091ff"),
       checkins,
       sortOrder: asNumber(h.sortOrder, habits.length),
       createdAt: asNumber(h.createdAt, Date.now()),
@@ -283,17 +290,39 @@ let lastErrorAt = 0;
 // 让 UI 能收到"存不下/存不了"的提示;不注册则只写 console。
 export function onStorageError(fn: StorageErrorHandler): void { errorHandler = fn; }
 
-type LockManagerLike = { request<T>(name: string, callback: () => Promise<T>): Promise<T> };
+type LockManagerLike = { request<T>(name: string, callback: () => T | Promise<T>): Promise<T> };
 
 function cloneSnapshot<T>(value: T): T { return structuredClone(value); }
 
 class LocalStore implements Database {
   private cache: Snapshot | null = null;
   private queue: Promise<void> = Promise.resolve();
+  private knownTaskIds = new Set<string>();
 
   private data(): Snapshot {
     if (!this.cache) this.cache = this.loadFromDisk();
     return this.cache;
+  }
+
+  private rememberTasks(snapshot: Snapshot): void {
+    for (const task of snapshot.tasks) this.knownTaskIds.add(task.id);
+  }
+
+  private protectCorrupt(raw: string): void {
+    try { localStorage.setItem(CORRUPT_PREFIX + Date.now(), raw); }
+    catch {
+      this.report("本地数据损坏，原文备份失败，已停止覆盖原始数据。");
+      throw new Error("本地数据损坏且无法备份原文");
+    }
+  }
+
+  private resetCorrupt(raw: string): Snapshot {
+    this.protectCorrupt(raw);
+    this.report("本地数据损坏,已另存原文并重置为示例数据。");
+    const seed = defaultSnapshot();
+    this.write(seed);
+    this.rememberTasks(seed);
+    return seed;
   }
 
   private loadFromDisk(): Snapshot {
@@ -304,38 +333,46 @@ class LocalStore implements Database {
       throw new Error("读取本地数据失败");
     }
     if (raw) {
-      let result: NormalizeResult | null = null;
-      try {
-        result = normalizeSnapshot(JSON.parse(raw));
-      } catch (error) {
+      let parsed: unknown;
+      try { parsed = JSON.parse(raw); }
+      catch { return this.resetCorrupt(raw); }
+
+      let structurallyCorrupt = false;
+      try { assertSnapshotImport(parsed); }
+      catch { structurallyCorrupt = true; }
+
+      let result: NormalizeResult;
+      try { result = normalizeSnapshot(parsed); }
+      catch (error) {
         if (error instanceof UnsupportedSchemaVersionError) {
           this.report("数据由更新版本的 Locado 创建，当前版本已停止写入。请升级应用后再使用。");
           throw error;
         }
-        let protectedCopy = false;
-        try { localStorage.setItem(CORRUPT_PREFIX + Date.now(), raw); protectedCopy = true; } catch { /* 保留原始主键 */ }
-        if (!protectedCopy) {
-          this.report("本地数据损坏，原文备份失败，已停止覆盖原始数据。");
-          throw new Error("本地数据损坏且无法备份原文");
-        }
-        this.report("本地数据损坏,已另存原文并重置为示例数据。");
+        return this.resetCorrupt(raw);
       }
-      if (result) {
-        if (result.warnings.length) console.warn("[Locado] 数据已自动修复:", result.warnings.join(";"));
-        if (result.migrated) {
-          try {
-            createSafetyBackup(raw, "before-migration");
-            this.write(result.snap);
-          } catch (error) {
-            this.report("数据迁移未完成，原始数据未被替换。请先导出备份并检查存储空间。");
-            throw error;
-          }
-        }
+      if (result.warnings.length) console.warn("[Locado] 数据已自动修复:", result.warnings.join(";"));
+      if (structurallyCorrupt) {
+        this.protectCorrupt(raw);
+        this.report("本地数据损坏,已另存原文并修复数据。");
+        this.write(result.snap);
+        this.rememberTasks(result.snap);
         return result.snap;
       }
+      if (result.migrated) {
+        try {
+          createSafetyBackup(raw, "before-migration");
+          this.write(result.snap);
+        } catch (error) {
+          this.report("数据迁移未完成，原始数据未被替换。请先导出备份并检查存储空间。");
+          throw error;
+        }
+      }
+      this.rememberTasks(result.snap);
+      return result.snap;
     }
     const seed = defaultSnapshot();
     this.write(seed);
+    this.rememberTasks(seed);
     return seed;
   }
 
@@ -363,38 +400,125 @@ class LocalStore implements Database {
     return result;
   }
 
-  private withWriteLock<T>(operation: () => Promise<T> | T): Promise<T> {
-    return this.enqueue(async () => {
-      if (typeof navigator !== "undefined") {
-        const locks = (navigator as unknown as { locks?: LockManagerLike }).locks;
-        if (locks) return locks.request("locado.snapshot.write", async () => operation());
+  private withIndexedDBLock<T>(operation: () => T): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      if (typeof indexedDB === "undefined") {
+        this.report("浏览器事务锁不可用，已停止写入以保护本地数据。");
+        reject(new Error("IndexedDB 不可用，无法锁定本地数据"));
+        return;
       }
-      return operation();
+
+      let database: IDBDatabase | null = null;
+      let transaction: IDBTransaction | null = null;
+      let settled = false;
+      let operationFailed = false;
+      let operationError: unknown;
+      let lockError: unknown;
+      let result: T;
+
+      const close = () => {
+        if (database) database.close();
+        database = null;
+      };
+      const rejectLock = (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        close();
+        this.report("浏览器事务锁执行失败，已停止写入以保护本地数据。");
+        reject(error instanceof Error ? error : new Error("IndexedDB 事务锁失败"));
+      };
+      const rejectOperation = (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        close();
+        reject(error);
+      };
+
+      let openRequest: IDBOpenDBRequest;
+      try { openRequest = indexedDB.open("locado.snapshot.locks", 1); }
+      catch (error) { rejectLock(error); return; }
+
+      openRequest.onupgradeneeded = () => {
+        const db = openRequest.result;
+        if (!db.objectStoreNames.contains("writes")) db.createObjectStore("writes");
+      };
+      openRequest.onerror = () => rejectLock(openRequest.error);
+      openRequest.onblocked = () => rejectLock(new Error("IndexedDB 事务锁打开被阻塞"));
+      openRequest.onsuccess = () => {
+        database = openRequest.result;
+        if (settled) { close(); return; }
+        try { transaction = database.transaction("writes", "readwrite"); }
+        catch (error) { rejectLock(error); return; }
+        const tx = transaction;
+
+        tx.oncomplete = () => {
+          if (operationFailed) rejectOperation(operationError);
+          else if (lockError) rejectLock(lockError);
+          else if (!settled) { settled = true; close(); resolve(result); }
+        };
+        tx.onabort = () => {
+          if (operationFailed) rejectOperation(operationError);
+          else rejectLock(lockError ?? tx.error ?? new Error("IndexedDB 事务锁已中止"));
+        };
+        tx.onerror = () => { lockError ??= tx.error; };
+
+        let request: IDBRequest;
+        try { request = tx.objectStore("writes").get("snapshot"); }
+        catch (error) {
+          lockError = error;
+          try { tx.abort(); } catch { rejectLock(error); }
+          return;
+        }
+        request.onerror = () => { lockError ??= request.error; };
+        request.onsuccess = () => {
+          try { result = operation(); }
+          catch (error) {
+            operationFailed = true;
+            operationError = error;
+            try { tx.abort(); } catch { rejectOperation(error); }
+          }
+        };
+      };
     });
   }
 
-  private mutate<T>(operation: (snapshot: Snapshot) => T | Promise<T>): Promise<T> {
-    return this.withWriteLock(async () => {
+  private withWriteLock<T>(operation: () => T): Promise<T> {
+    return this.enqueue(() => {
+      if (typeof navigator !== "undefined") {
+        const locks = (navigator as unknown as { locks?: LockManagerLike }).locks;
+        if (locks) return locks.request("locado.snapshot.write", () => operation());
+      }
+      return this.withIndexedDBLock(operation);
+    });
+  }
+
+  private mutate<T>(operation: (snapshot: Snapshot) => T, shouldWrite: (result: T) => boolean = () => true): Promise<T> {
+    return this.withWriteLock(() => {
       const latest = this.loadFromDisk();
-      const result = await operation(latest);
-      this.write(latest);
+      const result = operation(latest);
+      if (shouldWrite(result)) this.write(latest);
       this.cache = latest;
       return result;
     });
   }
 
-  async load(): Promise<Snapshot> { return cloneSnapshot(this.data()); }
+  async load(): Promise<Snapshot> {
+    return this.withWriteLock(() => cloneSnapshot(this.data()));
+  }
   async reload(): Promise<Snapshot> {
-    const fresh = this.loadFromDisk();
-    this.cache = fresh;
-    return cloneSnapshot(fresh);
+    return this.withWriteLock(() => {
+      const fresh = this.loadFromDisk();
+      this.cache = fresh;
+      return cloneSnapshot(fresh);
+    });
   }
   async replaceAll(next: Snapshot): Promise<void> {
     const replacement = cloneSnapshot(next);
-    return this.mutate((snapshot) => {
+    await this.mutate((snapshot) => {
       createSafetyBackup(JSON.stringify(snapshot));
       Object.assign(snapshot, replacement);
     });
+    this.rememberTasks(replacement);
   }
 
   async saveProject(p: Project): Promise<void> {
@@ -455,7 +579,9 @@ class LocalStore implements Database {
     });
   }
 
-  async saveTask(t: Task): Promise<void> { return this.saveTasks([t]); }
+  async saveTask(t: Task, options: TaskSaveOptions = {}): Promise<void> {
+    return this.saveTasks([t], [], options);
+  }
   async updateTask(t: Task): Promise<void> {
     const value = cloneSnapshot(t);
     return this.mutate((snapshot) => {
@@ -468,16 +594,22 @@ class LocalStore implements Database {
       snapshot.tasks[i] = value;
     });
   }
-  async saveTasks(upserts: Task[], deleteIds: string[] = []): Promise<void> {
+  async saveTasks(upserts: Task[], deleteIds: string[] = [], options: TaskSaveOptions = {}): Promise<void> {
     const values = cloneSnapshot(upserts);
     const deleted = new Set(deleteIds);
-    return this.mutate((snapshot) => {
+    await this.mutate((snapshot) => {
+      const currentIds = new Set(snapshot.tasks.map((task) => task.id));
+      const hasStaleUpsert = !options.restore && values.some((task) => !currentIds.has(task.id) && this.knownTaskIds.has(task.id));
+      if (hasStaleUpsert) return false;
       if (deleted.size) snapshot.tasks = snapshot.tasks.filter((task) => !deleted.has(task.id));
       for (const task of values) {
         const i = snapshot.tasks.findIndex((x) => x.id === task.id);
-        if (i >= 0) snapshot.tasks[i] = task; else snapshot.tasks.push(task);
+        if (i >= 0) snapshot.tasks[i] = task;
+        else if (options.restore || !this.knownTaskIds.has(task.id)) snapshot.tasks.push(task);
       }
-    });
+      return true;
+    }, (applied) => applied);
+    for (const task of values) this.knownTaskIds.add(task.id);
   }
   async deleteTask(id: string): Promise<void> {
     return this.mutate((snapshot) => { snapshot.tasks = snapshot.tasks.filter((x) => x.id !== id); });
@@ -490,7 +622,7 @@ class LocalStore implements Database {
       if (currentAt !== at || now < at) return null;
       task.reminded = true;
       return { task: cloneSnapshot(task), notify: now - at < 12 * 3600000 };
-    });
+    }, (claim) => claim !== null);
   }
 }
 

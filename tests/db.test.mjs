@@ -1,10 +1,10 @@
-import { test } from "node:test";
+import { afterEach, beforeEach, test } from "node:test";
 import assert from "node:assert/strict";
 import { assertSnapshotImport, createLocalStore, normalizeSnapshot, onStorageError, SNAPSHOT_KEY } from "../src/db.ts";
 import { BACKUP_PREFIX, flushAutoBackup, listBackups, readBackupSnapshot } from "../src/backups.ts";
 
 class MemoryStorage {
-  constructor() { this.data = new Map(); this.failPrefix = null; this.readFailPrefix = null; }
+  constructor() { this.data = new Map(); this.writeCounts = new Map(); this.failPrefix = null; this.readFailPrefix = null; }
   getItem(key) {
     if (this.readFailPrefix && key.startsWith(this.readFailPrefix)) throw new Error("read failed");
     return this.data.has(key) ? this.data.get(key) : null;
@@ -12,12 +12,69 @@ class MemoryStorage {
   setItem(key, value) {
     if (this.failPrefix && key.startsWith(this.failPrefix)) throw new Error("write failed");
     this.data.set(key, String(value));
+    this.writeCounts.set(key, (this.writeCounts.get(key) ?? 0) + 1);
   }
   removeItem(key) { this.data.delete(key); }
   clear() { this.data.clear(); }
   key(index) { return [...this.data.keys()][index] ?? null; }
   get length() { return this.data.size; }
 }
+
+function createIndexedDBMock() {
+  let chain = Promise.resolve();
+  return {
+    open() {
+      const openRequest = { result: null, error: null };
+      queueMicrotask(() => {
+        const database = {
+          objectStoreNames: { contains: () => true },
+          createObjectStore() {},
+          close() {},
+          transaction() {
+            let aborted = false;
+            const tx = {
+              error: null,
+              abort() {
+                if (aborted) return;
+                aborted = true;
+                queueMicrotask(() => tx.onabort?.());
+              },
+              objectStore() {
+                return {
+                  get() {
+                    const request = { error: null };
+                    chain = chain.then(() => {
+                      request.onsuccess?.();
+                      if (!aborted) tx.oncomplete?.();
+                    });
+                    return request;
+                  },
+                };
+              },
+            };
+            return tx;
+          },
+        };
+        openRequest.result = database;
+        openRequest.onsuccess?.();
+      });
+      return openRequest;
+    },
+  };
+}
+
+const navigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+const indexedDBDescriptor = Object.getOwnPropertyDescriptor(globalThis, "indexedDB");
+beforeEach(() => {
+  Object.defineProperty(globalThis, "navigator", { value: {}, configurable: true });
+  Object.defineProperty(globalThis, "indexedDB", { value: createIndexedDBMock(), configurable: true });
+});
+afterEach(() => {
+  if (navigatorDescriptor) Object.defineProperty(globalThis, "navigator", navigatorDescriptor);
+  else delete globalThis.navigator;
+  if (indexedDBDescriptor) Object.defineProperty(globalThis, "indexedDB", indexedDBDescriptor);
+  else delete globalThis.indexedDB;
+});
 
 test("旧快照补默认值并保留显式四象限字段", () => {
   const { snap, warnings } = normalizeSnapshot({
@@ -63,6 +120,21 @@ test("快照规整保留有效重复字段并丢弃非法规则", () => {
   assert.equal(repeat.recurrenceNextId, "next");
   assert.equal(invalid.recurrence, undefined);
   assert.equal(invalid.recurrenceNextId, undefined);
+});
+
+test("颜色仅接受六位 hex，非法值回退各类记录默认值", () => {
+  const { snap } = normalizeSnapshot({
+    projects: [{ id: "inbox", color: "#abc" }, { id: "valid", color: "#A1b2C3" }],
+    tags: [{ id: "tag", color: "url(javascript:alert(1))" }],
+    tasks: [],
+    filters: [{ id: "filter", color: "red", rule: {} }],
+    habits: [{ id: "habit", color: "#1234567" }],
+  });
+  assert.equal(snap.projects.find((item) => item.id === "inbox").color, "#6e7681");
+  assert.equal(snap.projects.find((item) => item.id === "valid").color, "#A1b2C3");
+  assert.equal(snap.tags[0].color, "#6e7681");
+  assert.equal(snap.filters[0].color, "#6e7681");
+  assert.equal(snap.habits[0].color, "#0091ff");
 });
 
 test("异常快照输入不会导致白屏", () => {
@@ -244,6 +316,19 @@ test("读取失败不会用示例数据覆盖原快照", async () => {
   assert.equal(storage.getItem(SNAPSHOT_KEY), "{still-protected");
 });
 
+test("无 Web Locks 且 IndexedDB 不可用时失败关闭且不写主键", async () => {
+  flushAutoBackup();
+  const storage = new MemoryStorage();
+  globalThis.localStorage = storage;
+  onStorageError(() => {});
+  const db = createLocalStore();
+  const snap = await db.load();
+  const originalRaw = storage.getItem(SNAPSHOT_KEY);
+  Object.defineProperty(globalThis, "indexedDB", { value: undefined, configurable: true });
+  await assert.rejects(db.saveTask(taskFrom(snap, "must-not-write")), /IndexedDB/);
+  assert.equal(storage.getItem(SNAPSHOT_KEY), originalRaw);
+});
+
 test("共享 Web Locks 下并发新增不会互相覆盖", async () => {
   flushAutoBackup();
   const storage = new MemoryStorage();
@@ -264,6 +349,24 @@ test("共享 Web Locks 下并发新增不会互相覆盖", async () => {
   });
 });
 
+test("无 Web Locks 时 IndexedDB 事务回退串行化双实例并发新增", async () => {
+  flushAutoBackup();
+  const storage = new MemoryStorage();
+  globalThis.localStorage = storage;
+  onStorageError(() => {});
+  const a = createLocalStore();
+  const b = createLocalStore();
+  const snap = await a.load();
+  await b.load();
+  await Promise.all([
+    a.saveTask(taskFrom(snap, "fallback-a")),
+    b.saveTask(taskFrom(snap, "fallback-b")),
+  ]);
+  const finalSnap = await a.reload();
+  assert.ok(finalSnap.tasks.some((task) => task.id === "fallback-a"));
+  assert.ok(finalSnap.tasks.some((task) => task.id === "fallback-b"));
+});
+
 test("其它实例删除后，旧编辑不会复活任务", async () => {
   flushAutoBackup();
   const storage = new MemoryStorage();
@@ -277,6 +380,59 @@ test("其它实例删除后，旧编辑不会复活任务", async () => {
   await a.updateTask({ ...task, title: "过期编辑" });
   const finalSnap = await a.reload();
   assert.equal(finalSnap.tasks.some((item) => item.id === task.id), false);
+});
+
+test("saveTask 和 saveTasks 默认不复活已删除任务，但允许新 ID 与显式恢复", async () => {
+  flushAutoBackup();
+  const storage = new MemoryStorage();
+  globalThis.localStorage = storage;
+  onStorageError(() => {});
+  const a = createLocalStore();
+  const b = createLocalStore();
+  const snap = await a.load();
+  const first = snap.tasks[0];
+  const second = taskFrom(snap, "known-second");
+  await a.saveTask(second);
+  await b.deleteTask(first.id);
+  await b.deleteTask(second.id);
+  await a.reload();
+
+  await a.saveTask({ ...first, title: "过期单任务保存" });
+  await a.saveTasks([{ ...second, title: "过期批量保存" }]);
+  let finalSnap = await a.reload();
+  assert.equal(finalSnap.tasks.some((task) => task.id === first.id), false);
+  assert.equal(finalSnap.tasks.some((task) => task.id === second.id), false);
+
+  await a.saveTask(taskFrom(snap, "brand-new"));
+  await a.saveTask(first, { restore: true });
+  await a.saveTasks([second], [], { restore: true });
+  finalSnap = await a.reload();
+  assert.ok(finalSnap.tasks.some((task) => task.id === "brand-new"));
+  assert.ok(finalSnap.tasks.some((task) => task.id === first.id));
+  assert.ok(finalSnap.tasks.some((task) => task.id === second.id));
+});
+
+test("过期重复计划不会复活新下一期或误删关联实例", async () => {
+  flushAutoBackup();
+  const storage = new MemoryStorage();
+  globalThis.localStorage = storage;
+  onStorageError(() => {});
+  const a = createLocalStore();
+  const b = createLocalStore();
+  const snap = await a.load();
+  const original = snap.tasks[0];
+  const linked = taskFrom(snap, "linked-next");
+  await a.saveTask(linked);
+  await b.deleteTask(original.id);
+
+  await a.saveTasks(
+    [{ ...original, completed: true }, taskFrom(snap, "next-spawn")],
+    [linked.id],
+  );
+  const finalSnap = await a.reload();
+  assert.equal(finalSnap.tasks.some((task) => task.id === original.id), false);
+  assert.equal(finalSnap.tasks.some((task) => task.id === "next-spawn"), false);
+  assert.ok(finalSnap.tasks.some((task) => task.id === linked.id));
 });
 
 test("并发提醒认领只有一个成功且只落盘一次状态", async () => {
@@ -299,6 +455,31 @@ test("并发提醒认领只有一个成功且只落盘一次状态", async () =>
     const finalSnap = await a.reload();
     assert.equal(finalSnap.tasks.find((item) => item.id === task.id).reminded, true);
   });
+});
+
+test("空提醒认领不写主键但刷新缓存，成功认领仍正常落盘", async () => {
+  flushAutoBackup();
+  const storage = new MemoryStorage();
+  globalThis.localStorage = storage;
+  onStorageError(() => {});
+  const a = createLocalStore();
+  const b = createLocalStore();
+  const snap = await a.load();
+  await b.load();
+  const at = Date.now() + 60000;
+  const task = { ...taskFrom(snap, "empty-claim"), dueDate: at, hasTime: true, reminderMinutesBefore: 0 };
+  await a.saveTask(task);
+  await b.updateTask({ ...task, title: "其它实例的新标题" });
+  const writesBeforeEmptyClaim = storage.writeCounts.get(SNAPSHOT_KEY) ?? 0;
+
+  assert.equal(await a.claimReminder(task.id, at + 1, at), null);
+  assert.equal(storage.writeCounts.get(SNAPSHOT_KEY) ?? 0, writesBeforeEmptyClaim);
+  const cached = await a.load();
+  assert.equal(cached.tasks.find((item) => item.id === task.id).title, "其它实例的新标题");
+
+  const claim = await a.claimReminder(task.id, at, at);
+  assert.ok(claim);
+  assert.equal(storage.writeCounts.get(SNAPSHOT_KEY) ?? 0, writesBeforeEmptyClaim + 1);
 });
 
 test("启动补查只系统通知十二小时内的提醒，较早提醒会标记为遗漏", async () => {

@@ -141,3 +141,70 @@ test("关闭时仍有写入会提示，停留后完成落盘", async ({ page }) 
   await page.reload({ waitUntil: "domcontentloaded" });
   await expect(page.locator(".task-title", { hasText: "关闭前保存任务" }).first()).toBeVisible();
 });
+
+test("无 Web Locks 时 IndexedDB 串行化双页并发新增", async ({ page, context }) => {
+  await context.addInitScript(() => {
+    Object.defineProperty(navigator, "locks", { value: undefined, configurable: true });
+  });
+  const second = await context.newPage();
+  await Promise.all([
+    page.goto("/", { waitUntil: "networkidle" }),
+    second.goto("/", { waitUntil: "networkidle" }),
+  ]);
+  await page.locator(".add-input").fill("IndexedDB 页面 A");
+  await second.locator(".add-input").fill("IndexedDB 页面 B");
+  await Promise.all([
+    page.locator(".add-input").press("Enter"),
+    second.locator(".add-input").press("Enter"),
+  ]);
+
+  await expect.poll(async () => {
+    const snapshot = await readSnapshot(page);
+    return snapshot.tasks.map((task) => task.title).filter((title) => title.startsWith("IndexedDB 页面")).sort();
+  }).toEqual(["IndexedDB 页面 A", "IndexedDB 页面 B"]);
+  await second.close();
+});
+
+test.describe("本地日期边界", () => {
+  test.use({ timezoneId: "America/Los_Angeles" });
+
+  test("今天和最近七天使用本地日历半开区间", async ({ page }) => {
+    await page.clock.install({ time: new Date("2026-11-01T07:00:00Z") });
+    await page.addInitScript(({ key }) => {
+      localStorage.setItem(key, JSON.stringify({
+        schemaVersion: 2,
+        projects: [{ id: "inbox", name: "收集箱", color: "#3e63dd" }],
+        tags: [], filters: [], habits: [], focusRecords: [],
+        tasks: [
+          { id: "today", projectId: "inbox", title: "今日内", dueDate: Date.parse("2026-11-02T07:30:00Z"), hasTime: true },
+          { id: "tomorrow", projectId: "inbox", title: "明日零点", dueDate: Date.parse("2026-11-02T08:00:00Z"), hasTime: true },
+          { id: "week", projectId: "inbox", title: "七日内", dueDate: Date.parse("2026-11-08T07:59:00Z"), hasTime: true },
+          { id: "day-eight", projectId: "inbox", title: "第八天零点", dueDate: Date.parse("2026-11-08T08:00:00Z"), hasTime: true },
+        ],
+      }));
+    }, { key: SNAPSHOT_KEY });
+    await page.goto("/", { waitUntil: "networkidle" });
+    await expect(page.locator(".task-title", { hasText: "今日内" })).toBeVisible();
+    await expect(page.locator(".task-title", { hasText: "明日零点" })).toHaveCount(0);
+
+    await page.getByRole("button", { name: /^最近 7 天/ }).click();
+    await expect(page.locator(".task-title", { hasText: "七日内" })).toBeVisible();
+    await expect(page.locator(".task-title", { hasText: "第八天零点" })).toHaveCount(0);
+  });
+});
+
+test("番茄钟到期临界暂停仍完成记录并进入休息", async ({ page }) => {
+  const startedAt = new Date("2026-11-01T12:00:00Z");
+  await page.clock.install({ time: startedAt });
+  await page.goto("/", { waitUntil: "networkidle" });
+  await page.getByTitle("专注", { exact: true }).click();
+  await page.getByRole("button", { name: "15 分", exact: true }).click();
+  await page.getByRole("button", { name: "开始专注", exact: true }).click();
+  await page.clock.setFixedTime(new Date(startedAt.getTime() + 16 * 60_000));
+  await page.getByRole("button", { name: "暂停", exact: true }).click();
+
+  await expect(page.locator(".focus-mode")).toHaveText("休息");
+  await expect.poll(async () => (await readSnapshot(page)).focusRecords.length).toBe(1);
+  const snapshot = await readSnapshot(page);
+  expect(snapshot.focusRecords[0].minutes).toBe(15);
+});

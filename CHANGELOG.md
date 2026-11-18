@@ -4,23 +4,33 @@ Notable changes to Locado are documented here. The format is based on [Keep a Ch
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-18
+
 ### Added
 
 - GitHub Pages online demo deployment with subpath-aware production and PWA builds.
 - Local-only usage statistics for active days, task creation and completion, Quick Add corrections, exports, and recent activity; no task content or telemetry is collected.
 - Versioned snapshot migrations with pre-migration protection backups and write protection for data created by newer app versions.
 - Build metadata and PWA update checks with a save-before-reload update prompt.
-- Chromium end-to-end coverage for cold-offline installs, migrations, update reloads, backup restore protection, and close-time save flushing.
+- Chromium end-to-end coverage for cold-offline installs, migrations, update reloads, backup restore protection, close-time save flushing, IndexedDB fallback locking, local calendar boundaries, and focus completion.
 
 ### Changed
 
 - Launcher scripts now run `git pull --ff-only` before building and stop on update failures instead of building stale source.
+- WSL mirrors now retain all launcher files required by regression tests, and setup consistently installs and activates Node.js 24.
+- GitHub Pages deployment now runs as a reusable workflow gated by the complete CI suite instead of publishing independently.
+- Sidebar counts and calendar rendering now pre-aggregate tasks instead of repeatedly scanning the full snapshot.
 
 ### Fixed
 
 - The Windows WSL launcher now always updates and builds before reusing a preview, verifies the served build ID, and refuses to open a different service on port 1420.
 - Static PWA shell requests now match same-origin pre-cached assets across `Vary: Origin` differences, preventing a cold install from failing its first offline load.
 - Pending edits now flush when the page is hidden and warn before closing with active saves; snapshot replacement creates its protection backup inside the same write lock.
+- Cross-tab writes now use Web Locks or an IndexedDB transaction fallback, fail closed when neither is available, and reject stale recurring-task plans atomically without resurrecting deleted tasks.
+- Structurally damaged snapshots now preserve their original text before normalization, including incomplete legacy objects that previously blocked startup.
+- TickTick CSV imports now keep all-day dates on the correct local day, map supported reminders and repeat rules, warn about unsupported formats, and deduplicate tag references.
+- Today and next-seven-day filters now follow local calendar boundaries across midnight and DST changes; zero-second focus pauses complete normally and overflowing repeat intervals no longer create invalid dates.
+- Imported colors are restricted to six-digit hex values, unsuccessful reminder claims no longer rewrite the full snapshot, and duplicate tags no longer inflate sidebar counts.
 
 ## [0.2.0] - 2026-11-03
 

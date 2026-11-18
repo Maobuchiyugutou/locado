@@ -64,3 +64,32 @@ test("WSL 启动脚本支持独立构建和仅预览模式", () => {
   assert.ok(source.includes('if [ "$MODE" != "--serve-only" ]'), "仅预览模式不得重复拉取和构建");
   assert.ok(buildOnlyAt > buildAt && buildOnlyAt < previewAt, "独立构建模式必须在启动预览前退出");
 });
+
+test("WSL 同步保留启动脚本以满足完整回归测试", () => {
+  for (const file of ["scripts/wsl-run.sh", "scripts/wsl-serve.sh"]) {
+    const source = readFileSync(file, "utf8");
+    assert.ok(source.includes("rsync -a --delete"), `${file} 必须保留镜像同步`);
+    assert.ok(!source.includes("--exclude 'wsl-*.sh'"), `${file} 不得排除 WSL 脚本`);
+    assert.ok(!source.includes("--exclude 'start-locado.cmd'"), `${file} 不得排除 Windows 入口`);
+  }
+});
+
+test("WSL 准备脚本始终安装并启用 Node 24", () => {
+  const source = readFileSync("scripts/wsl-build.sh", "utf8");
+  assert.ok(source.includes("nvm install 24"));
+  assert.ok(source.includes("nvm use 24"));
+  assert.ok(!source.includes("--lts"));
+  assert.ok(!source.includes("|| true"));
+});
+
+test("Pages 仅在完整 CI 成功后部署", () => {
+  const ci = readFileSync(".github/workflows/ci.yml", "utf8");
+  const demo = readFileSync(".github/workflows/demo.yml", "utf8");
+  assert.ok(ci.includes("workflow_dispatch:"));
+  assert.ok(ci.includes("needs: test-and-build"));
+  assert.ok(ci.includes("if: github.event_name != 'pull_request'"));
+  assert.ok(ci.includes("uses: ./.github/workflows/demo.yml"));
+  assert.ok(demo.includes("workflow_call:"));
+  assert.ok(!demo.includes("branches: [main]"));
+  assert.ok(!demo.includes("run: npm test"));
+});
