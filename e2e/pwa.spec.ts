@@ -200,7 +200,7 @@ test("番茄钟到期临界暂停仍完成记录并进入休息", async ({ page 
   await page.getByTitle("专注", { exact: true }).click();
   await page.getByRole("button", { name: "15 分", exact: true }).click();
   await page.getByRole("button", { name: "开始专注", exact: true }).click();
-  await page.clock.pauseAt(startedAt);
+  await page.clock.pauseAt(new Date(startedAt.getTime() + 60_000));
   await page.clock.setSystemTime(new Date(startedAt.getTime() + 16 * 60_000));
   await page.getByRole("button", { name: "暂停", exact: true }).click();
 
