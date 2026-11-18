@@ -4,7 +4,7 @@
 
 A local-first task manager for planning, habits, and focused work. Capture tasks in natural language, organize them your way, and work offline with an installable PWA—no account, tracking, or backend required.
 
-[![CI](https://github.com/Maobuchiyugutou/locado/actions/workflows/ci.yml/badge.svg)](https://github.com/Maobuchiyugutou/locado/actions/workflows/ci.yml)
+[![CI](https://github.com/Maobuchiyugutou/locado/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Maobuchiyugutou/locado/actions/workflows/ci.yml)
 [![Online demo](https://img.shields.io/badge/online_demo-open_now-c15f3c?logo=githubpages)](https://maobuchiyugutou.github.io/locado/)
 [![Version](https://img.shields.io/github/v/tag/Maobuchiyugutou/locado?sort=semver&label=version)](https://github.com/Maobuchiyugutou/locado/tags)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
