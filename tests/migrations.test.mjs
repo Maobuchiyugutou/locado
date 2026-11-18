@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { beforeEach, test } from "node:test";
 import assert from "node:assert/strict";
 import {
   assertSnapshotImport,
@@ -12,7 +12,7 @@ import {
   migrateSnapshotRecord,
   UnsupportedSchemaVersionError,
 } from "../src/migrations.ts";
-import { BACKUP_PREFIX, listBackups, readBackupSnapshot } from "../src/backups.ts";
+import { BACKUP_PREFIX, flushAutoBackup, listBackups, readBackupSnapshot } from "../src/backups.ts";
 
 class MemoryStorage {
   constructor() { this.data = new Map(); this.failPrefix = null; }
@@ -42,6 +42,19 @@ function legacySnapshot() {
 }
 
 onStorageError(() => {});
+
+beforeEach(() => {
+  flushAutoBackup();
+  let chain = Promise.resolve();
+  const locks = {
+    request(_name, callback) {
+      const result = chain.then(callback);
+      chain = result.then(() => undefined, () => undefined);
+      return result;
+    },
+  };
+  Object.defineProperty(globalThis, "navigator", { value: { locks }, configurable: true });
+});
 
 test("无版本号的旧快照升级到当前版本并保留历史字段", () => {
   const legacy = legacySnapshot();
@@ -102,6 +115,57 @@ test("非对象存储不会误进迁移备份流程", async () => {
   const snap = await db.load();
   assert.equal(snap.schemaVersion, CURRENT_SCHEMA_VERSION);
   assert.equal(listBackups().some((backup) => backup.reason === "before-migration"), false);
+});
+
+test("空对象按结构损坏保留原文副本后写入规整快照", async () => {
+  globalThis.localStorage = new MemoryStorage();
+  localStorage.setItem(SNAPSHOT_KEY, "{}");
+  const db = createLocalStore();
+  const snap = await db.load();
+  assert.equal(snap.schemaVersion, CURRENT_SCHEMA_VERSION);
+  assert.ok(Array.isArray(snap.tasks));
+  const corruptKey = [...localStorage.data.keys()].find((key) => key.startsWith(SNAPSHOT_KEY + ".corrupt."));
+  assert.ok(corruptKey);
+  assert.equal(localStorage.getItem(corruptKey), "{}");
+  assert.equal(JSON.parse(localStorage.getItem(SNAPSHOT_KEY)).schemaVersion, CURRENT_SCHEMA_VERSION);
+  assert.equal(listBackups().some((backup) => backup.reason === "before-migration"), false);
+});
+
+test("当前版本结构损坏同样先保留原文再写回修复结果", async () => {
+  globalThis.localStorage = new MemoryStorage();
+  const damaged = { ...legacySnapshot(), schemaVersion: CURRENT_SCHEMA_VERSION, tasks: [null] };
+  const original = JSON.stringify(damaged);
+  localStorage.setItem(SNAPSHOT_KEY, original);
+  const db = createLocalStore();
+  const snap = await db.load();
+  assert.equal(snap.schemaVersion, CURRENT_SCHEMA_VERSION);
+  assert.deepEqual(snap.tasks, []);
+  const corruptKey = [...localStorage.data.keys()].find((key) => key.startsWith(SNAPSHOT_KEY + ".corrupt."));
+  assert.ok(corruptKey);
+  assert.equal(localStorage.getItem(corruptKey), original);
+  assert.deepEqual(JSON.parse(localStorage.getItem(SNAPSHOT_KEY)).tasks, []);
+  assert.equal(listBackups().some((backup) => backup.reason === "before-migration"), false);
+});
+
+test("结构损坏原文副本失败时不改写主键", async () => {
+  globalThis.localStorage = new MemoryStorage();
+  localStorage.setItem(SNAPSHOT_KEY, "{}");
+  localStorage.failPrefix = SNAPSHOT_KEY + ".corrupt.";
+  const db = createLocalStore();
+  await assert.rejects(() => db.load());
+  assert.equal(localStorage.getItem(SNAPSHOT_KEY), "{}");
+});
+
+test("正常当前版本读取不创建额外保护备份也不改写原文", async () => {
+  globalThis.localStorage = new MemoryStorage();
+  const current = { ...legacySnapshot(), schemaVersion: CURRENT_SCHEMA_VERSION };
+  const original = JSON.stringify(current);
+  localStorage.setItem(SNAPSHOT_KEY, original);
+  const db = createLocalStore();
+  const snap = await db.load();
+  assert.equal(snap.schemaVersion, CURRENT_SCHEMA_VERSION);
+  assert.equal(localStorage.getItem(SNAPSHOT_KEY), original);
+  assert.deepEqual(listBackups(), []);
 });
 
 test("未来版本数据在读取和后续写入中都保持原文不变", async () => {

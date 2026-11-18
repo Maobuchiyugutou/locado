@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -49,3 +50,12 @@ jobs:
 
       - name: Build Tauri Linux application without bundling
         run: npm run tauri -- build --no-bundle
+
+  demo:
+    needs: test-and-build
+    if: github.event_name != 'pull_request'
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/demo.yml

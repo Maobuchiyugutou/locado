@@ -181,7 +181,7 @@ function selectControl(options: SelectOption[], initial: string, onChange: (valu
 }
 
 const DAY = 86400000;
-function startOfToday(): number { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); }
+function startOfToday(offset = 0): number { const d = new Date(); d.setDate(d.getDate() + offset); d.setHours(0, 0, 0, 0); return d.getTime(); }
 function firstOfMonth(d: Date): Date { return new Date(d.getFullYear(), d.getMonth(), 1); }
 function dayKey(d: Date): string { return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`; }
 function toDateInput(ts: number | null): string {
@@ -236,8 +236,8 @@ function matchesRule(t: Task, r: Filter["rule"]): boolean {
   if (r.tagIds.length && !r.tagIds.some((id) => t.tags.includes(id))) return false;
   if (r.priorities.length && !r.priorities.includes(t.priority)) return false;
   if (r.due === "overdue" && !(t.dueDate != null && isOverdue(t.dueDate))) return false;
-  if (r.due === "today" && !(t.dueDate != null && t.dueDate <= startOfToday() + DAY)) return false;
-  if (r.due === "next7" && !(t.dueDate != null && t.dueDate <= startOfToday() + 7 * DAY)) return false;
+  if (r.due === "today" && !(t.dueDate != null && t.dueDate < startOfToday(1))) return false;
+  if (r.due === "next7" && !(t.dueDate != null && t.dueDate < startOfToday(7))) return false;
   if (r.due === "nodate" && t.dueDate != null) return false;
   return true;
 }
@@ -246,8 +246,8 @@ function matchView(t: Task, v: string): boolean {
   if (v === "smart:completed") return t.completed;
   if (t.completed) return false;
   if (v === "smart:all") return true;
-  if (v === "smart:today") return t.dueDate != null && t.dueDate <= startOfToday() + DAY;
-  if (v === "smart:next7") return t.dueDate != null && t.dueDate <= startOfToday() + 7 * DAY;
+  if (v === "smart:today") return t.dueDate != null && t.dueDate < startOfToday(1);
+  if (v === "smart:next7") return t.dueDate != null && t.dueDate < startOfToday(7);
   if (v.startsWith("project:")) return t.projectId === v.slice(8);
   if (v.startsWith("tag:")) return t.tags.includes(v.slice(4));
   if (v.startsWith("filter:")) {
@@ -259,6 +259,19 @@ function matchView(t: Task, v: string): boolean {
 
 function activeCount(v: string): number {
   return snap.tasks.filter((t) => !t.completed && matchView(t, v)).length;
+}
+
+function collectActiveCounts(): Map<string, number> {
+  const counts = new Map<string, number>();
+  const add = (id: string) => counts.set(id, (counts.get(id) ?? 0) + 1);
+  for (const t of snap.tasks) {
+    if (t.completed) continue;
+    for (const id of ["smart:today", "smart:next7", "smart:all"]) if (matchView(t, id)) add(id);
+    add("project:" + t.projectId);
+    for (const id of new Set(t.tags)) add("tag:" + id);
+    for (const f of snap.filters) if (matchesRule(t, f.rule)) add("filter:" + f.id);
+  }
+  return counts;
 }
 
 /* 手动排序按视图分别记录,避免在"今天"拖一次就改掉"全部"的顺序。
@@ -318,18 +331,19 @@ function viewName(v: string): string {
 /* ============ 侧边栏 ============ */
 function renderSidebar(): void {
   const bar = $("#sidebar");
+  const counts = collectActiveCounts();
   bar.innerHTML = "";
   bar.append(el("div", { class: "brand" }, el("div", { class: "logo" }, icon("check", "logo-icon")), el("div", { class: "name" }, "Locado")));
 
   for (const s of SMART) {
     const noCount = s.id === "calendar" || s.id === "matrix";
-    bar.append(navItem({ id: s.id, ico: s.ico, label: s.name, count: noCount ? 0 : activeCount(s.id) }));
+    bar.append(navItem({ id: s.id, ico: s.ico, label: s.name, count: noCount ? 0 : (counts.get(s.id) ?? 0) }));
   }
 
   const lc = isCollapsed("projects", false);
   bar.append(groupHeader("projects", "清单", lc, () => addProject()));
   if (!lc) for (const p of [...snap.projects].sort((a, b) => a.sortOrder - b.sortOrder)) {
-    bar.append(navItem({ id: "project:" + p.id, dot: p.color, label: p.name, count: activeCount("project:" + p.id), onDel: p.id === INBOX_ID ? undefined : () => removeProject(p.id) }));
+    bar.append(navItem({ id: "project:" + p.id, dot: p.color, label: p.name, count: counts.get("project:" + p.id) ?? 0, onDel: p.id === INBOX_ID ? undefined : () => removeProject(p.id) }));
   }
 
   {
@@ -339,7 +353,7 @@ function renderSidebar(): void {
       id: "tag:" + t.id,
       dot: t.color,
       label: t.name,
-      count: activeCount("tag:" + t.id),
+      count: counts.get("tag:" + t.id) ?? 0,
       onEdit: () => renameTag(t.id),
       onDel: () => removeTag(t.id),
     }));
@@ -349,7 +363,7 @@ function renderSidebar(): void {
     const fc = isCollapsed("filters", true);
     bar.append(groupHeader("filters", "筛选器", fc, () => openFilterEditor()));
     if (!fc) for (const f of snap.filters) {
-      bar.append(navItem({ id: "filter:" + f.id, dot: f.color, label: f.name, count: activeCount("filter:" + f.id), onEdit: () => openFilterEditor(f) }));
+      bar.append(navItem({ id: "filter:" + f.id, dot: f.color, label: f.name, count: counts.get("filter:" + f.id) ?? 0, onEdit: () => openFilterEditor(f) }));
     }
   }
 
@@ -515,6 +529,14 @@ function renderCalendar(list: HTMLElement): void {
   const offset = (first.getDay() + 6) % 7;
   const start = new Date(first); start.setDate(first.getDate() - offset);
   const todayKey = dayKey(new Date());
+  const tasksByDay = new Map<string, Task[]>();
+  for (const t of snap.tasks) {
+    if (t.completed || t.dueDate == null) continue;
+    const key = dayKey(new Date(t.dueDate));
+    const tasks = tasksByDay.get(key);
+    if (tasks) tasks.push(t); else tasksByDay.set(key, [t]);
+  }
+  for (const tasks of tasksByDay.values()) tasks.sort(sortTasks);
 
   for (let i = 0; i < 42; i++) {
     const d = new Date(start); d.setDate(start.getDate() + i);
@@ -527,7 +549,7 @@ function renderCalendar(list: HTMLElement): void {
       title: `在 ${d.getMonth() + 1} 月 ${d.getDate()} 日新建任务`,
       onClick: (e: Event) => { e.stopPropagation(); void quickAddOn(theDay); },
     }, String(d.getDate())));
-    const dayTasks = snap.tasks.filter((t) => !t.completed && t.dueDate != null && dayKey(new Date(t.dueDate)) === dayKey(d)).sort(sortTasks);
+    const dayTasks = tasksByDay.get(dayKey(d)) ?? [];
     for (const t of dayTasks.slice(0, 3)) {
       const event = el("div", {
         class: "cal-ev",
@@ -839,6 +861,7 @@ function focusStart(): void {
 }
 function focusPause(): void {
   focus.remaining = Math.max(0, Math.round((focus.endsAt - Date.now()) / 1000));
+  if (focus.remaining === 0) { void focusComplete(); return; }
   focus.running = false;
   focus.endsAt = 0;
   persistFocus();
@@ -1213,15 +1236,13 @@ async function toggleDone(t: Task): Promise<void> {
   const completing = !t.completed;
   try {
     const plan = planRecurringToggle(snap.tasks, t.id, Date.now(), uid);
-    if (!(await persist(() => db.saveTasks(plan.upserts, plan.deleteIds)))) return;
-    if (completing) recordUsage({ type: "complete" });
-    if (plan.deleteIds.length) snap.tasks = snap.tasks.filter((task) => !plan.deleteIds.includes(task.id));
-    for (const task of plan.upserts) {
-      const i = snap.tasks.findIndex((item) => item.id === task.id);
-      if (i >= 0) snap.tasks[i] = task; else snap.tasks.push(task);
-    }
-    if (plan.nextPreserved) toast("下一次任务已保留，原任务已转为普通任务");
+    if (!(await persist(async () => {
+      await db.saveTasks(plan.upserts, plan.deleteIds);
+      snap = await db.reload();
+    }))) return;
     const current = snap.tasks.find((task) => task.id === t.id);
+    if (completing && current?.completed) recordUsage({ type: "complete" });
+    if (plan.nextPreserved) toast("下一次任务已保留，原任务已转为普通任务");
     if (selectedId === t.id && current?.completed) closeDetail(); else render();
   } finally {
     togglingTasks.delete(t.id);
@@ -1272,7 +1293,7 @@ async function removeTask(id: string): Promise<void> {
         label: "撤销",
         run: () => {
           snap.tasks.push(backup);
-          void persist(() => db.saveTask(backup)).then((ok) => { if (ok) render(); });
+          void persist(() => db.saveTask(backup, { restore: true })).then((ok) => { if (ok) render(); });
         },
       },
     });
@@ -1344,7 +1365,7 @@ async function removeProject(id: string): Promise<void> {
         snap.tasks.push(...doomed);
         void persist(async () => {
           await db.saveProject(p);
-          await db.saveTasks(doomed);
+          await db.saveTasks(doomed, [], { restore: true });
         }).then((ok) => { if (ok) render(); });
       },
     },
@@ -1552,7 +1573,7 @@ async function download(name: string, text: string): Promise<void> {
 
 async function importCsvText(text: string): Promise<{ tasks: number; projects: number; tags: number; warnings: string[] }> {
   const res = importFromTickTickCsv(text);
-  const warnings: string[] = [];
+  const warnings = [...res.warnings];
   if (!(await flushSaves())) throw new Error("当前修改未保存，已取消导入");
   snap = await db.reload();
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -e
 # 以 E:\Locado 为唯一源码,整目录同步到 WSL 的 ext4 副本(~/Locado),再装依赖。
-# 用 rsync --delete 全量镜像,新增/删除的文件都会跟上;node_modules 只存在于 WSL,
-# 不参与同步,所以不会被删掉。package-lock.json 随源码同步,供 npm ci 使用。
+# 用 rsync --delete 全量镜像,新增/删除的文件都会跟上;node_modules 不参与同步,
+# 所以不会被删掉。package-lock.json 和启动脚本随源码同步,供安装与回归测试使用。
 export NVM_DIR="$HOME/.nvm"
 # shellcheck disable=SC1091
 . "$NVM_DIR/nvm.sh"
@@ -17,8 +17,6 @@ rsync -a --delete \
   --exclude .git \
   --exclude .vscode \
   --exclude .claude \
-  --exclude 'wsl-*.sh' \
-  --exclude 'start-locado.cmd' \
   "$SRC"/ "$DEST"/
 echo "synced files:"; ls -1 "$DEST"
 

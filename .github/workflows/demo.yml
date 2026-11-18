@@ -1,9 +1,7 @@
 name: Deploy online demo
 
 on:
-  push:
-    branches: [main]
-  workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -29,9 +27,6 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
-
-      - name: Run regression tests
-        run: npm test
 
       - name: Build the PWA for the repository subpath
         run: npm run build

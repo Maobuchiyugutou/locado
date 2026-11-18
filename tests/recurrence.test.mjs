@@ -105,6 +105,16 @@ test("完成后 N 天使用完成日期并保留原时刻", () => {
   assert.equal(new Date(next).getMinutes(), 30);
 });
 
+test("完成后 N 天溢出时不生成无效下一实例", () => {
+  const task = makeTask({ recurrence: { kind: "afterCompletion", days: Number.MAX_SAFE_INTEGER } });
+  const now = local(2026, 10, 29, 9, 30);
+  assert.equal(nextRecurringDue(task.recurrence, task.dueDate, now), null);
+  const plan = planRecurringToggle([task], "one", now, () => "overflow-next");
+  assert.equal(plan.upserts.length, 1);
+  assert.equal(plan.upserts[0].completed, true);
+  assert.equal(plan.upserts.some((item) => item.id === "overflow-next"), false);
+});
+
 test("完成时保留历史并生成状态干净的下一实例", () => {
   const original = makeTask({ recurrence: { kind: "monthly", day: 31 } });
   const now = local(2026, 1, 31, 12);

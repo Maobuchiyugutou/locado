@@ -27,8 +27,6 @@ if [ "$MODE" != "--serve-only" ]; then
     --exclude .git \
     --exclude .vscode \
     --exclude .claude \
-    --exclude 'wsl-*.sh' \
-    --exclude 'start-locado.cmd' \
     "$SRC"/ "$DEST"/ || exit 1
 
   cd "$DEST" || exit 1

@@ -75,7 +75,8 @@ export function nextRecurringDue(rule: RecurrenceRule, currentDue: number, compl
     const next = new Date(completedAt);
     next.setHours(current.getHours(), current.getMinutes(), current.getSeconds(), current.getMilliseconds());
     next.setDate(next.getDate() + rule.days);
-    return next.getTime();
+    const timestamp = next.getTime();
+    return Number.isFinite(timestamp) ? timestamp : null;
   }
 
   let candidate = nextFixedOccurrence(rule, current);
@@ -84,7 +85,8 @@ export function nextRecurringDue(rule: RecurrenceRule, currentDue: number, compl
     if (!next || next.getTime() <= candidate.getTime()) return null;
     candidate = next;
   }
-  return candidate?.getTime() ?? null;
+  const timestamp = candidate?.getTime();
+  return timestamp != null && Number.isFinite(timestamp) ? timestamp : null;
 }
 
 export function firstRecurringDue(rule: RecurrenceRule, from: number): number | null {
